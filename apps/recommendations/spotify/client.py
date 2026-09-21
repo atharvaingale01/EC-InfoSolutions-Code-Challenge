@@ -5,11 +5,14 @@ Only endpoints verified to work for a newly created (development-mode) app:
   * POST accounts.spotify.com/api/token
   * GET  /v1/search            (type=track with genre:/artist: filters, type=artist)
 
-Notes from live testing (Sep 2026):
-  * /v1/recommendations returns 404 and /v1/artists/{id}/top-tracks returns
-    403 for new apps, so artist seeds are expanded with a track search
-    filtered by artist name instead.
-  * Track objects returned by search omit `popularity` and `preview_url`.
+Per Spotify's February 2026 development-mode changes (confirmed live, Sep 2026):
+  * /v1/recommendations (removed Nov 2024) returns 404 and
+    /v1/artists/{id}/top-tracks (removed Feb 2026) returns 403, so artist
+    seeds are expanded with a track search filtered by artist name instead.
+  * Track objects no longer include `popularity`; `preview_url` is deprecated.
+  * /v1/search `limit` is capped at 10 (was 50); the client clamps to that.
+  * The app owner must hold an active Spotify Premium subscription.
+  https://developer.spotify.com/documentation/web-api/references/changes/february-2026
 
 Every GET is routed through the persistent SpotifyCache table.
 """
@@ -34,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN_CACHE_KEY = "spotify:token"
 MAX_ATTEMPTS = 3
+SEARCH_MAX_LIMIT = 10  # Spotify reduced the search limit ceiling from 50 to 10 in Feb 2026
 
 
 class SpotifyClient:
@@ -119,6 +123,7 @@ class SpotifyClient:
     # -- endpoints ----------------------------------------------------------
 
     def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
+        limit = max(1, min(limit, SEARCH_MAX_LIMIT))
         params = {"q": query, "type": "track", "limit": limit, "market": self.market}
         data = self._cached("search_tracks", "/search", params)
         return data.get("tracks", {}).get("items", []) or []

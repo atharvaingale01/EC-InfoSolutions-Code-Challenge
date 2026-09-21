@@ -1,11 +1,11 @@
 """
 Offline stand-in for SpotifyClient, enabled with SPOTIFY_MOCK=1.
 
-Spotify blocks Web API access for apps whose owner has no Premium
-subscription, which makes live evaluation impossible on a free account. This
-client serves the same response shapes from a local fixture so the whole
-pipeline (Celery, persistent cache, Redis, analytics) can be exercised
-end-to-end without credentials or network access.
+Since February 2026 every development-mode Spotify app requires its owner to
+hold an active Premium subscription; without one the dashboard shows the app
+as blocked and API calls return 403. This client serves the same response
+shapes from a local fixture so the whole pipeline (Celery, persistent cache,
+Redis, analytics) can be exercised end-to-end without credentials or network.
 """
 
 import logging
