@@ -159,3 +159,12 @@ def test_artist_tracks_uses_filtered_search():
     assert len(SpotifyClient().artist_tracks("Radiohead", limit=5)) == 2
     sent = responses.calls[-1].request.url
     assert "artist%3A%22Radiohead%22" in sent and "type=track" in sent
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_search_limit_is_clamped_to_spotify_maximum():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
+    SpotifyClient().search_tracks("q", limit=50)
+    assert "limit=10" in responses.calls[-1].request.url
