@@ -1,0 +1,143 @@
+"""
+Turns a user's stated preferences into a ranked list of Spotify tracks.
+
+Strategy (Spotify's /recommendations endpoint is unavailable to new apps):
+  * each favourite genre  -> track search  `genre:"<g>"`
+  * each favourite artist -> resolve to an id, pull top tracks
+  * each mood             -> MOOD_MAP terms -> genre searches
+Results are normalised, de-duplicated, scored and diversity-capped.
+"""
+
+import logging
+from collections import defaultdict
+
+from django.conf import settings
+
+from .spotify.client import SpotifyClient
+from .spotify.exceptions import SpotifyNotFound
+from .spotify.moods import MOOD_MAP
+
+logger = logging.getLogger(__name__)
+
+GENRE_SEARCH_LIMIT = 10
+ARTIST_TOP_LIMIT = 10
+MOOD_SEARCH_LIMIT = 5
+MAX_PER_ARTIST = 3
+FALLBACK_GENRE = "pop"
+
+SEED_HIT_WEIGHT = 10.0
+ARTIST_SEED_BONUS = 5.0
+
+
+def normalise_track(item: dict, seed: str) -> dict | None:
+    if not item or not item.get("id"):
+        return None
+    return {
+        "spotify_id": item["id"],
+        "name": item.get("name", ""),
+        "artists": [a.get("name", "") for a in item.get("artists", []) if a.get("name")],
+        "album": (item.get("album") or {}).get("name", ""),
+        "preview_url": item.get("preview_url"),
+        "external_url": (item.get("external_urls") or {}).get("spotify", ""),
+        "popularity": int(item.get("popularity") or 0),
+        "duration_ms": int(item.get("duration_ms") or 0),
+        "seed": seed,
+        "score": 0.0,
+    }
+
+
+def collect_candidates(user, client: SpotifyClient) -> tuple[list[dict], dict]:
+    """Return (raw candidate tracks tagged by seed, seed_params snapshot)."""
+    genres = list(user.favorite_genres or [])
+    artists = list(user.favorite_artists or [])
+    moods = list(user.moods or [])
+
+    candidates: list[dict] = []
+    resolved_artists: dict[str, str | None] = {}
+
+    for genre in genres:
+        for item in client.search_tracks(f'genre:"{genre}"', limit=GENRE_SEARCH_LIMIT):
+            if track := normalise_track(item, f"genre:{genre}"):
+                candidates.append(track)
+
+    for artist_name in artists:
+        try:
+            artist = client.search_artist(artist_name)
+        except SpotifyNotFound:
+            artist = None
+        resolved_artists[artist_name] = artist["id"] if artist else None
+        if not artist:
+            logger.info("Artist %r not found on Spotify; skipping", artist_name)
+            continue
+        for item in client.artist_top_tracks(artist["id"])[:ARTIST_TOP_LIMIT]:
+            if track := normalise_track(item, f"artist:{artist_name}"):
+                candidates.append(track)
+
+    for mood in moods:
+        for term in MOOD_MAP.get(mood, []):
+            for item in client.search_tracks(f'genre:"{term}"', limit=MOOD_SEARCH_LIMIT):
+                if track := normalise_track(item, f"mood:{mood}"):
+                    candidates.append(track)
+
+    used_fallback = False
+    if not candidates:
+        used_fallback = True
+        for item in client.search_tracks(f'genre:"{FALLBACK_GENRE}"', limit=GENRE_SEARCH_LIMIT):
+            if track := normalise_track(item, f"fallback:{FALLBACK_GENRE}"):
+                candidates.append(track)
+
+    seed_params = {
+        "genres": genres,
+        "artists": artists,
+        "artist_ids": resolved_artists,
+        "moods": moods,
+        "used_fallback": used_fallback,
+        "market": client.market,
+    }
+    return candidates, seed_params
+
+
+def rank(candidates: list[dict], limit: int) -> list[dict]:
+    """De-duplicate by track id, score, cap per artist, sort, truncate."""
+    merged: dict[str, dict] = {}
+    seed_hits: dict[str, set[str]] = defaultdict(set)
+    artist_seeded: set[str] = set()
+
+    for track in candidates:
+        tid = track["spotify_id"]
+        seed_hits[tid].add(track["seed"])
+        if track["seed"].startswith("artist:"):
+            artist_seeded.add(tid)
+        if tid not in merged:
+            merged[tid] = dict(track)
+
+    for tid, track in merged.items():
+        hits = len(seed_hits[tid])
+        score = hits * SEED_HIT_WEIGHT + track["popularity"] / 10.0
+        if tid in artist_seeded:
+            score += ARTIST_SEED_BONUS
+        track["score"] = round(score, 2)
+        track["seed"] = ", ".join(sorted(seed_hits[tid]))
+
+    ordered = sorted(merged.values(), key=lambda t: (-t["score"], t["name"]))
+
+    per_artist: dict[str, int] = defaultdict(int)
+    result: list[dict] = []
+    for track in ordered:
+        primary = track["artists"][0] if track["artists"] else ""
+        if per_artist[primary] >= MAX_PER_ARTIST:
+            continue
+        per_artist[primary] += 1
+        result.append(track)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def build_recommendations(user, client: SpotifyClient | None = None, limit: int | None = None):
+    client = client or SpotifyClient()
+    limit = limit or settings.RECS_DEFAULT_LIMIT
+    candidates, seed_params = collect_candidates(user, client)
+    tracks = rank(candidates, limit)
+    seed_params["candidates"] = len(candidates)
+    return tracks, seed_params
