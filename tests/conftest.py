@@ -28,6 +28,7 @@ class FakeSpotifyClient:
     """Deterministic stand-in for SpotifyClient used by the engine."""
 
     market = "US"
+    source = "search_v1"
 
     def __init__(self):
         self.calls: list[tuple] = []
@@ -65,7 +66,7 @@ class FakeSpotifyClient:
 @pytest.fixture(autouse=True)
 def fake_spotify(monkeypatch):
     client = FakeSpotifyClient()
-    monkeypatch.setattr("apps.recommendations.engine.SpotifyClient", lambda: client)
+    monkeypatch.setattr("apps.recommendations.engine.get_client", lambda: client)
     return client
 
 

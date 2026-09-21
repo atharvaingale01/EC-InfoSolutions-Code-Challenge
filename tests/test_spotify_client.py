@@ -138,3 +138,13 @@ def test_401_refreshes_token_once():
     responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
     assert len(SpotifyClient().search_tracks("q")) == 1
     assert responses.calls[-1].request.headers["Authorization"] == "Bearer tok2"
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_403_fails_fast_with_premium_hint():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, status=403)
+    with pytest.raises(SpotifyAuthError, match="blocked"):
+        SpotifyClient().search_tracks("q")
+    assert sum(1 for c in responses.calls if c.request.method == "GET") == 1  # no retries
