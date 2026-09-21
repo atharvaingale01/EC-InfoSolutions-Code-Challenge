@@ -32,14 +32,15 @@ A Django REST backend that recommends songs to users based on their stated genre
 
 ## Quick start
 
-Prerequisites: Docker with Compose v2, and a Spotify app (client id + secret) from <https://developer.spotify.com/dashboard>.
+Prerequisites: Docker with Compose v2. For live Spotify data you also need a Spotify app (client id + secret) from <https://developer.spotify.com/dashboard> **owned by a Spotify Premium account** (see [Spotify access and mock mode](#spotify-access-and-mock-mode)). Without one, set `SPOTIFY_MOCK=1` and everything still runs.
 
 ```bash
 git clone https://github.com/atharvaingale01/EC-InfoSolutions-Code-Challenge.git
 cd EC-InfoSolutions-Code-Challenge
 
 cp .env.example .env
-# edit .env → set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
+# edit .env → either set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET (Premium-owned app)
+#             or set SPOTIFY_MOCK=1 to run on fixture data with no credentials
 
 make up        # builds images, starts db, redis, web, worker, beat, nginx
 make seed      # 5 demo users + staff user + sample activity, queues recommendations
@@ -345,6 +346,28 @@ The client is behind a small interface. If your Spotify app still has access to 
 
 ---
 
+## Spotify access and mock mode
+
+Spotify now **blocks Web API access for apps whose owner does not have a Premium subscription**. The developer dashboard shows a banner to that effect and API calls return `403`, even though the token endpoint still issues tokens. This cannot be worked around from the client side.
+
+To keep the service evaluable on any machine, a fixture-backed client can be switched on with one variable:
+
+```
+SPOTIFY_MOCK=1
+```
+
+| | `SPOTIFY_MOCK=0` (default) | `SPOTIFY_MOCK=1` |
+|-|----------------------------|------------------|
+| Client | `SpotifyClient` → Spotify Web API | `MockSpotifyClient` → local fixture |
+| Credentials | required, Premium-owned app | none |
+| Network | yes | no |
+| `Recommendation.source` | `search_v1` | `mock_v1` |
+| Everything downstream | identical: persistent `SpotifyCache`, Celery, Redis, analytics, throttling | |
+
+The fixture (`apps/recommendations/spotify/mock_data.py`) holds real Spotify track ids, names and artists grouped by the same genre terms the engine searches, plus top tracks for the artists used by the demo users. Mock responses take the same shape as Spotify's and pass through the same cache layer, so the code path exercised is the real one apart from the HTTP call. The `source` field on recommendation rows and in the `GET /recommendations/{id}/` response makes mock output unmistakable.
+
+If the real client receives a `403`, it fails fast with a message pointing at the Premium requirement and `SPOTIFY_MOCK`, rather than retrying.
+
 ## Caching
 
 | Layer | Key | TTL | Invalidated by |
@@ -405,7 +428,7 @@ pip install -r requirements.txt
 POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest
 ```
 
-The suite (64 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
+The suite (70 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
 
 ---
 
@@ -416,7 +439,7 @@ config/            settings (base / dev / prod / test), celery app, root urls
 apps/core/         permissions, throttles, health endpoint, seed_demo command
 apps/users/        custom User, register / update / detail views, JWT routes
 apps/recommendations/
-  spotify/         client, persistent cache, mood map, exceptions
+  spotify/         client, mock client + fixture, persistent cache, mood map, exceptions
   engine.py        candidate collection + ranking
   tasks.py         Celery tasks
   views.py         refresh + retrieve endpoints
@@ -434,6 +457,7 @@ postman/           collection + environment
 ## Assumptions and limitations
 
 - **Spotify recommendations endpoint is deprecated** for new apps, so results come from search and artist top-tracks. Quality depends on Spotify search relevance for `genre:` queries; it is a reasonable proxy, not a collaborative-filtering engine.
+- **Live Spotify data requires a Premium-owned app.** Spotify blocks the Web API for free-account apps. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated without one; it is a demo fallback, clearly labelled via `source: mock_v1`, not a substitute for the integration.
 - **Client Credentials only.** The service never sees a user's Spotify library or listening history; recommendations reflect the preferences they type in.
 - **Genres are free text.** Spotify's genre-seed list endpoint is also deprecated, so genres are not validated. An unknown genre simply contributes no tracks.
 - **Moods are a fixed vocabulary** mapped to genre terms in `apps/recommendations/spotify/moods.py`.
