@@ -32,17 +32,17 @@ def test_mock_search_and_artist_flow(settings):
 
     artist = client.search_artist("radiohead")
     assert artist["name"] == "Radiohead"
-    top = client.artist_top_tracks(artist["id"])
-    assert top == ARTIST_TOP_TRACKS["Radiohead"]
+    assert client.artist_tracks("Radiohead") == ARTIST_TOP_TRACKS["Radiohead"]
+    assert client.artist_top_tracks(artist["id"]) == ARTIST_TOP_TRACKS["Radiohead"]
 
     assert client.search_artist("Nobody Known") is None
     assert client.search_tracks('genre:"polka"') == []
     assert client.search_tracks("creep")[0]["name"] == "Creep"
 
     # Responses go through the same persistent cache as the real client.
-    assert SpotifyCache.objects.filter(endpoint="search_tracks").count() == 3
+    assert SpotifyCache.objects.filter(endpoint="search_tracks").count() == 4
     client.search_tracks('genre:"rock"', limit=3)
-    assert SpotifyCache.objects.filter(endpoint="search_tracks").count() == 3
+    assert SpotifyCache.objects.filter(endpoint="search_tracks").count() == 4
 
 
 @pytest.mark.django_db

@@ -104,6 +104,14 @@ class TestTask:
         assert "bad creds" in rec.error
         assert cache.get(recs_cache_key(user.pk)) is None
 
+    def test_forbidden_marks_failed_without_retry(self, fake_spotify, user):
+        from apps.recommendations.spotify.exceptions import SpotifyForbidden
+
+        fake_spotify.raise_on_search = SpotifyForbidden("403 for /search")
+        result = refresh_user_recommendations.apply(args=[str(user.pk)]).get()
+        assert result["status"] == "failed"
+        assert "403" in Recommendation.objects.get(user=user).error
+
     def test_unexpected_error_marks_failed(self, fake_spotify, user):
         fake_spotify.raise_on_search = RuntimeError("boom")
         result = refresh_user_recommendations.apply(args=[str(user.pk)]).get()

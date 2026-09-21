@@ -6,6 +6,7 @@ from apps.recommendations.models import SpotifyCache
 from apps.recommendations.spotify.client import TOKEN_CACHE_KEY, SpotifyClient
 from apps.recommendations.spotify.exceptions import (
     SpotifyAuthError,
+    SpotifyForbidden,
     SpotifyNotFound,
     SpotifyRateLimited,
     SpotifyUnavailable,
@@ -142,9 +143,19 @@ def test_401_refreshes_token_once():
 
 @pytest.mark.django_db
 @responses.activate
-def test_403_fails_fast_with_premium_hint():
+def test_403_fails_fast_as_forbidden():
     mock_token()
     responses.add(responses.GET, SEARCH_URL, status=403)
-    with pytest.raises(SpotifyAuthError, match="blocked"):
+    with pytest.raises(SpotifyForbidden, match="SPOTIFY_MOCK"):
         SpotifyClient().search_tracks("q")
     assert sum(1 for c in responses.calls if c.request.method == "GET") == 1  # no retries
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_artist_tracks_uses_filtered_search():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(2), status=200)
+    assert len(SpotifyClient().artist_tracks("Radiohead", limit=5)) == 2
+    sent = responses.calls[-1].request.url
+    assert "artist%3A%22Radiohead%22" in sent and "type=track" in sent
