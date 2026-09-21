@@ -32,7 +32,7 @@ A Django REST backend that recommends songs to users based on their stated genre
 
 ## Quick start
 
-Prerequisites: Docker with Compose v2. For live Spotify data you also need a Spotify app (client id + secret) from <https://developer.spotify.com/dashboard> **owned by a Spotify Premium account** (see [Spotify access and mock mode](#spotify-access-and-mock-mode)). Without one, set `SPOTIFY_MOCK=1` and everything still runs.
+Prerequisites: Docker with Compose v2. For live Spotify data you also need a Spotify app (client id + secret) from <https://developer.spotify.com/dashboard> **owned by a Spotify Premium account**, which Spotify requires for all development-mode apps (see [Spotify access and mock mode](#spotify-access-and-mock-mode)). Without one, set `SPOTIFY_MOCK=1` and everything still runs.
 
 ```bash
 git clone https://github.com/atharvaingale01/EC-InfoSolutions-Code-Challenge.git
@@ -340,10 +340,12 @@ Spotify retired `GET /v1/recommendations` for applications created after Novembe
 | each artist | `GET /search?type=artist` to confirm the artist, then `GET /search?type=track&q=artist:"<name>"` |
 | each mood | mapped to genre terms (e.g. `chill → chill, ambient, lo-fi`) and searched as above |
 
-These were verified live against a freshly created development-mode app (September 2026). Two further restrictions were found during that test and are handled:
+These were verified live against a freshly created development-mode app (September 2026) and match Spotify's [February 2026 changelog](https://developer.spotify.com/documentation/web-api/references/changes/february-2026):
 
-- `GET /artists/{id}/top-tracks` returns **403** for new apps, so artist seeds use a filtered track search instead. The client still exposes the legacy call for apps that have access.
-- Track objects returned by search **no longer include `popularity` or `preview_url`**. Scoring therefore also uses each track's position in Spotify's relevance-ordered results.
+- `GET /recommendations` was removed for new apps in November 2024 (returns 404).
+- `GET /artists/{id}/top-tracks` was removed in February 2026 (returns 403), so artist seeds use a filtered track search instead. The client still exposes the legacy call for grandfathered apps.
+- Track objects **no longer include `popularity`**, and `preview_url` is deprecated. Scoring therefore also uses each track's position in Spotify's relevance-ordered results.
+- `GET /search` now caps `limit` at 10 (previously 50). The client clamps to that ceiling.
 
 Candidates are de-duplicated by track id and scored as `seed_hits × 10 + popularity ÷ 10 + relevance`, where relevance decays with position in the search results, plus a bonus for tracks from a favourite artist. Results are capped at 3 tracks per artist for variety and truncated to `RECS_DEFAULT_LIMIT` (20). A user with no preferences receives a `pop` fallback so the endpoint is never empty.
 
@@ -353,7 +355,7 @@ The client is behind a small interface. If your Spotify app still has access to 
 
 ## Spotify access and mock mode
 
-Spotify now **blocks Web API access for apps whose owner does not have a Premium subscription**. The developer dashboard shows a banner to that effect and API calls return `403`, even though the token endpoint still issues tokens. This cannot be worked around from the client side.
+Since the [February 2026 development-mode changes](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), **every development-mode app requires its owner to hold an active Spotify Premium subscription**. Without one the dashboard marks the app as blocked and API calls return `403`, even though the token endpoint still issues tokens. This cannot be worked around from the client side.
 
 To keep the service evaluable on any machine, a fixture-backed client can be switched on with one variable:
 
@@ -433,7 +435,7 @@ pip install -r requirements.txt
 POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest
 ```
 
-The suite (74 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
+The suite (76 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
 
 ---
 
@@ -462,7 +464,7 @@ postman/           collection + environment
 ## Assumptions and limitations
 
 - **Spotify recommendations endpoint is deprecated** for new apps, so results come from search and artist top-tracks. Quality depends on Spotify search relevance for `genre:` queries; it is a reasonable proxy, not a collaborative-filtering engine.
-- **Live Spotify data depends on the app's account.** Some accounts see a "blocked from accessing the Web API" banner and get 403 on every call; others can create working development-mode apps. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated either way; it is a demo fallback, clearly labelled via `source: mock_v1`, not a substitute for the integration.
+- **Live Spotify data requires the app owner to have Spotify Premium.** This is Spotify's rule for development-mode apps since February 2026; free accounts see a "blocked from accessing the Web API" banner and get 403 on every call. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated without one; it is a demo fallback, clearly labelled via `source: mock_v1`, not a substitute for the integration.
 - **Search results omit `popularity` and `preview_url`** for new apps, so `popularity` is reported as 0 and `preview_url` as null in live mode. Ranking compensates with search position.
 - **Client Credentials only.** The service never sees a user's Spotify library or listening history; recommendations reflect the preferences they type in.
 - **Genres are free text.** Spotify's genre-seed list endpoint is also deprecated, so genres are not validated. An unknown genre simply contributes no tracks.
