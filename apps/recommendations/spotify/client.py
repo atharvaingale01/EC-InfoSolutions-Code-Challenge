@@ -1,10 +1,15 @@
 """
 Minimal Spotify Web API client using the Client Credentials flow.
 
-Only endpoints that remain available to new apps are used:
+Only endpoints verified to work for a newly created (development-mode) app:
   * POST accounts.spotify.com/api/token
-  * GET  /v1/search
-  * GET  /v1/artists/{id}/top-tracks
+  * GET  /v1/search            (type=track with genre:/artist: filters, type=artist)
+
+Notes from live testing (Sep 2026):
+  * /v1/recommendations returns 404 and /v1/artists/{id}/top-tracks returns
+    403 for new apps, so artist seeds are expanded with a track search
+    filtered by artist name instead.
+  * Track objects returned by search omit `popularity` and `preview_url`.
 
 Every GET is routed through the persistent SpotifyCache table.
 """
@@ -19,6 +24,7 @@ from django.core.cache import cache
 from .cache import cached_get
 from .exceptions import (
     SpotifyAuthError,
+    SpotifyForbidden,
     SpotifyNotFound,
     SpotifyRateLimited,
     SpotifyUnavailable,
@@ -82,13 +88,13 @@ class SpotifyClient:
                 token = self.get_token(force=True)
                 continue
             if resp.status_code == 403:
-                # Spotify blocks the Web API for apps whose owner has no Premium
-                # subscription (and for apps in development mode calling
-                # restricted endpoints). Retrying cannot help.
-                raise SpotifyAuthError(
-                    "Spotify returned 403: Web API access is blocked for this app. "
-                    "The app owner needs Spotify Premium, or set SPOTIFY_MOCK=1 for "
-                    "fixture-backed recommendations."
+                # Either the whole Web API is blocked for this app (owner has no
+                # Premium subscription) or this endpoint is restricted for
+                # development-mode apps. Retrying cannot help.
+                raise SpotifyForbidden(
+                    f"Spotify returned 403 for {path}. The endpoint is not available to "
+                    "this app (Premium-owner requirement or development-mode restriction). "
+                    "Set SPOTIFY_MOCK=1 for fixture-backed recommendations."
                 )
             if resp.status_code == 404:
                 raise SpotifyNotFound(f"{path} returned 404")
@@ -123,7 +129,12 @@ class SpotifyClient:
         items = data.get("artists", {}).get("items", []) or []
         return items[0] if items else None
 
+    def artist_tracks(self, artist_name: str, limit: int = 10) -> list[dict]:
+        """Tracks by an artist via search (top-tracks endpoint is 403 for new apps)."""
+        return self.search_tracks(f'artist:"{artist_name}"', limit=limit)
+
     def artist_top_tracks(self, artist_id: str) -> list[dict]:
+        """Legacy endpoint kept for apps that still have access; 403 -> SpotifyForbidden."""
         params = {"market": self.market}
         data = self._cached("artist_top_tracks", f"/artists/{artist_id}/top-tracks", params)
         return data.get("tracks", []) or []

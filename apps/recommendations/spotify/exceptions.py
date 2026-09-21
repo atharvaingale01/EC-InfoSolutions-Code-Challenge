@@ -16,5 +16,9 @@ class SpotifyUnavailable(SpotifyError):
     """5xx or network failure after retries."""
 
 
+class SpotifyForbidden(SpotifyError):
+    """403 — endpoint not available to this app (development-mode / Premium restrictions)."""
+
+
 class SpotifyNotFound(SpotifyError):
     """404 — endpoint deprecated for this app or resource missing."""

@@ -8,7 +8,12 @@ from django.utils import timezone
 
 from .engine import build_recommendations
 from .models import Recommendation, SpotifyCache
-from .spotify.exceptions import SpotifyAuthError, SpotifyRateLimited, SpotifyUnavailable
+from .spotify.exceptions import (
+    SpotifyAuthError,
+    SpotifyForbidden,
+    SpotifyRateLimited,
+    SpotifyUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -62,7 +67,7 @@ def refresh_user_recommendations(self, user_id: str, recommendation_id: str | No
             rec.mark_failed(str(exc))
             return {"status": "failed", "error": str(exc)}
         raise
-    except SpotifyAuthError as exc:
+    except (SpotifyAuthError, SpotifyForbidden) as exc:
         rec.mark_failed(str(exc))
         return {"status": "failed", "error": str(exc)}
     except Exception as exc:  # noqa: BLE001 — never leave the row pending

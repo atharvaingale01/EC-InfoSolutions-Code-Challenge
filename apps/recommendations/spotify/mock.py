@@ -41,6 +41,9 @@ class MockSpotifyClient:
         items = data.get("artists", {}).get("items", []) or []
         return items[0] if items else None
 
+    def artist_tracks(self, artist_name: str, limit: int = 10) -> list[dict]:
+        return self.search_tracks(f'artist:"{artist_name}"', limit=limit)
+
     def artist_top_tracks(self, artist_id: str) -> list[dict]:
         params = {"market": self.market, "mock": True}
         data = cached_get(
@@ -52,6 +55,10 @@ class MockSpotifyClient:
 
     @staticmethod
     def _search(query: str, limit: int) -> dict:
+        if query.startswith('artist:"'):
+            name = query[len('artist:"') :].rstrip('"').strip().lower()
+            items = next((t for k, t in ARTIST_TOP_TRACKS.items() if k.lower() == name), [])
+            return {"tracks": {"items": items[:limit]}}
         term = query.replace('genre:"', "").rstrip('"').strip().lower()
         items = TRACKS_BY_GENRE.get(term)
         if items is None:
