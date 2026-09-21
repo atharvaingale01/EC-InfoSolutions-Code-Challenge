@@ -58,7 +58,8 @@ Useful targets:
 
 | Command | What it does |
 |---------|--------------|
-| `make up` / `make down` | Start / stop the stack |
+| `make up` / `make down` | Start / stop the production-style stack (nginx on :80) |
+| `make dev` / `make dev-down` | Start / stop the dev stack (autoreload, no nginx) |
 | `make logs` | Tail all service logs |
 | `make seed` | Create demo data (idempotent) |
 | `make test` | Run the pytest suite inside the web container |
@@ -67,6 +68,27 @@ Useful targets:
 | `make clean` | Stop and delete volumes (destroys data) |
 
 Change the published port with `NGINX_PORT=8080 make up` if 80 is taken.
+
+### Development stack
+
+`docker-compose.dev.yml` is an override layered on the base file. It swaps gunicorn for Django's autoreloading `runserver`, bind-mounts the source tree so edits apply instantly, turns on `DEBUG` and the browsable API, publishes Postgres and Redis on the host, and skips nginx.
+
+```bash
+make dev          # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+make dev-logs
+make dev-down
+```
+
+Dev API: <http://localhost:8000/>. Host ports are configurable with `DEV_WEB_PORT`, `DEV_DB_PORT`, `DEV_REDIS_PORT`. The dev stack uses its own project name and volumes, so it can run alongside the production-style stack.
+
+| | `docker-compose.yml` | `+ docker-compose.dev.yml` |
+|-|----------------------|----------------------------|
+| App server | gunicorn, 3 workers | runserver with autoreload |
+| Code | baked into the image | bind-mounted from the host |
+| Settings | `config.settings.prod` | `config.settings.dev`, `DEBUG=1` |
+| Entry point | nginx on :80 | Django on :8000, no nginx |
+| DB / Redis ports | internal only | published to the host |
+| Celery worker | concurrency 2, info logs | concurrency 1, debug logs |
 
 ### Demo accounts
 
@@ -402,6 +424,8 @@ apps/activity/     UserActivity model + endpoint
 apps/analytics/    aggregation queries + endpoints
 tests/             pytest suite
 docker/            nginx config, entrypoint
+docker-compose.yml       production-style stack
+docker-compose.dev.yml   dev override (runserver, bind mounts)
 postman/           collection + environment
 ```
 
