@@ -7,16 +7,34 @@ from apps.users.models import User
 from .conftest import make_track
 
 
-def test_rank_dedupes_and_boosts_multi_seed_tracks():
-    shared = engine.normalise_track(make_track("x", "Shared", "A", popularity=10), "genre:rock")
-    shared2 = dict(shared, seed="mood:chill")
-    solo = engine.normalise_track(make_track("y", "Solo", "B", popularity=90), "genre:rock")
+def test_rank_dedupes_and_boosts_tracks_found_by_distinct_queries():
+    shared = engine.normalise_track(
+        make_track("x", "Shared", "A", popularity=10), "genre:rock", query='genre:"rock"'
+    )
+    shared2 = dict(shared, seed="mood:chill", query='genre:"chill"')
+    solo = engine.normalise_track(
+        make_track("y", "Solo", "B", popularity=90), "genre:rock", query='genre:"rock"'
+    )
 
     ranked = engine.rank([shared, shared2, solo], limit=10)
 
     assert [t["spotify_id"] for t in ranked] == ["x", "y"]
     assert ranked[0]["seed"] == "genre:rock, mood:chill"
     assert ranked[0]["score"] > ranked[1]["score"]
+    assert "query" not in ranked[0] and "position" not in ranked[0]
+
+
+def test_same_query_from_two_seeds_counts_once():
+    """genre 'hip-hop' + mood 'energetic' both search genre:"hip-hop" -> one hit, not two."""
+    q = 'genre:"hip-hop"'
+    a = engine.normalise_track(make_track("g", "G", "GA"), "genre:hip-hop", 0, q)
+    b = dict(a, seed="mood:energetic")
+    artist = engine.normalise_track(
+        make_track("k", "K", "Kendrick"), "artist:Kendrick Lamar", 0, 'artist:"Kendrick Lamar"'
+    )
+    ranked = engine.rank([a, b, artist], limit=10)
+    assert ranked[0]["spotify_id"] == "k"  # favourite artist outranks a double-labelled genre hit
+    assert ranked[1]["seed"] == "genre:hip-hop, mood:energetic"
 
 
 def test_rank_caps_tracks_per_artist():
