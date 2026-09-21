@@ -34,7 +34,7 @@ ARTIST_SEED_BONUS = 5.0
 POSITION_WEIGHT = 0.3  # per rank step from the top of a search result list
 
 
-def normalise_track(item: dict, seed: str, position: int = 0) -> dict | None:
+def normalise_track(item: dict, seed: str, position: int = 0, query: str = "") -> dict | None:
     if not item or not item.get("id"):
         return None
     return {
@@ -48,6 +48,7 @@ def normalise_track(item: dict, seed: str, position: int = 0) -> dict | None:
         "duration_ms": int(item.get("duration_ms") or 0),
         "seed": seed,
         "position": position,
+        "query": query or seed,
         "score": 0.0,
     }
 
@@ -61,13 +62,13 @@ def collect_candidates(user, client) -> tuple[list[dict], dict]:
     candidates: list[dict] = []
     resolved_artists: dict[str, str | None] = {}
 
-    def add(items, seed):
-        for position, item in enumerate(items):
-            if track := normalise_track(item, seed, position):
+    def search(query, limit, seed):
+        for position, item in enumerate(client.search_tracks(query, limit=limit)):
+            if track := normalise_track(item, seed, position, query):
                 candidates.append(track)
 
     for genre in genres:
-        add(client.search_tracks(f'genre:"{genre}"', limit=GENRE_SEARCH_LIMIT), f"genre:{genre}")
+        search(f'genre:"{genre}"', GENRE_SEARCH_LIMIT, f"genre:{genre}")
 
     for artist_name in artists:
         try:
@@ -79,24 +80,24 @@ def collect_candidates(user, client) -> tuple[list[dict], dict]:
             logger.info("Artist %r not found on Spotify; skipping", artist_name)
             continue
         canonical = artist.get("name") or artist_name
+        query = f'artist:"{canonical}"'
         try:
             items = client.artist_tracks(canonical, limit=ARTIST_TOP_LIMIT)
         except (SpotifyNotFound, SpotifyForbidden) as exc:
             logger.warning("Artist tracks unavailable for %r: %s", canonical, exc)
             items = []
-        add(items, f"artist:{artist_name}")
+        for position, item in enumerate(items):
+            if track := normalise_track(item, f"artist:{artist_name}", position, query):
+                candidates.append(track)
 
     for mood in moods:
         for term in MOOD_MAP.get(mood, []):
-            add(client.search_tracks(f'genre:"{term}"', limit=MOOD_SEARCH_LIMIT), f"mood:{mood}")
+            search(f'genre:"{term}"', MOOD_SEARCH_LIMIT, f"mood:{mood}")
 
     used_fallback = False
     if not candidates:
         used_fallback = True
-        add(
-            client.search_tracks(f'genre:"{FALLBACK_GENRE}"', limit=GENRE_SEARCH_LIMIT),
-            f"fallback:{FALLBACK_GENRE}",
-        )
+        search(f'genre:"{FALLBACK_GENRE}"', GENRE_SEARCH_LIMIT, f"fallback:{FALLBACK_GENRE}")
 
     seed_params = {
         "genres": genres,
@@ -111,30 +112,41 @@ def collect_candidates(user, client) -> tuple[list[dict], dict]:
 
 
 def rank(candidates: list[dict], limit: int) -> list[dict]:
-    """De-duplicate by track id, score, cap per artist, sort, truncate."""
+    """
+    De-duplicate by track id, score, cap per artist, sort, truncate.
+
+    A track earns one "hit" per *distinct search query* that returned it. Two
+    seeds that expand to the same query (e.g. genre "hip-hop" and the
+    "energetic" mood) are one piece of evidence, not two; the seed label still
+    lists both so the reason is visible in the API response.
+    """
     merged: dict[str, dict] = {}
-    seed_hits: dict[str, set[str]] = defaultdict(set)
+    seed_labels: dict[str, set[str]] = defaultdict(set)
+    query_hits: dict[str, set[str]] = defaultdict(set)
     best_position: dict[str, int] = {}
     artist_seeded: set[str] = set()
 
     for track in candidates:
         tid = track["spotify_id"]
-        seed_hits[tid].add(track["seed"])
-        best_position[tid] = min(best_position.get(tid, track["position"]), track["position"])
+        seed_labels[tid].add(track["seed"])
+        query_hits[tid].add(track.get("query") or track["seed"])
+        position = track.get("position", 0)
+        best_position[tid] = min(best_position.get(tid, position), position)
         if track["seed"].startswith("artist:"):
             artist_seeded.add(tid)
         if tid not in merged:
             merged[tid] = dict(track)
 
     for tid, track in merged.items():
-        hits = len(seed_hits[tid])
+        hits = len(query_hits[tid])
         relevance = max(0, ARTIST_TOP_LIMIT - best_position[tid]) * POSITION_WEIGHT
         score = hits * SEED_HIT_WEIGHT + track["popularity"] / 10.0 + relevance
         if tid in artist_seeded:
             score += ARTIST_SEED_BONUS
         track["score"] = round(score, 2)
-        track["seed"] = ", ".join(sorted(seed_hits[tid]))
+        track["seed"] = ", ".join(sorted(seed_labels[tid]))
         track.pop("position", None)
+        track.pop("query", None)
 
     ordered = sorted(merged.values(), key=lambda t: (-t["score"], t["name"]))
 
