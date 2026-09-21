@@ -113,15 +113,17 @@ class RecommendationListView(APIView):
                 status=status.HTTP_202_ACCEPTED,
             )
 
-        return Response(
-            {
-                "detail": (
-                    "No recommendations yet. "
-                    f"POST /recommendations/{user_id}/refresh/ to generate them."
-                )
-            },
-            status=status.HTTP_404_NOT_FOUND,
+        latest_failed = (
+            Recommendation.objects.filter(user_id=user_id, status=Recommendation.Status.FAILED)
+            .order_by("-completed_at")
+            .first()
         )
+        hint = f"POST /recommendations/{user_id}/refresh/ to generate them."
+        if latest_failed:
+            detail = f"Last refresh failed: {latest_failed.error} {hint}"
+        else:
+            detail = f"No recommendations yet. {hint}"
+        return Response({"detail": detail}, status=status.HTTP_404_NOT_FOUND)
 
 
 def _parse_limit(raw) -> int:

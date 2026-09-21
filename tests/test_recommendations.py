@@ -52,6 +52,12 @@ class TestRetrieve:
         assert resp.status_code == 404
         assert "refresh" in resp.json()["detail"]
 
+    def test_failed_only_404_with_reason(self, auth_client, user):
+        Recommendation.objects.create(user=user, status="failed", error="creds missing")
+        resp = auth_client.get(f"/recommendations/{user.pk}/")
+        assert resp.status_code == 404
+        assert "creds missing" in resp.json()["detail"]
+
     def test_pending_only_202(self, auth_client, user):
         Recommendation.objects.create(user=user)
         resp = auth_client.get(f"/recommendations/{user.pk}/")
