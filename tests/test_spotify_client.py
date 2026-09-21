@@ -1,0 +1,140 @@
+import pytest
+import responses
+from django.conf import settings
+
+from apps.recommendations.models import SpotifyCache
+from apps.recommendations.spotify.client import TOKEN_CACHE_KEY, SpotifyClient
+from apps.recommendations.spotify.exceptions import (
+    SpotifyAuthError,
+    SpotifyNotFound,
+    SpotifyRateLimited,
+    SpotifyUnavailable,
+)
+
+TOKEN_URL = settings.SPOTIFY_TOKEN_URL
+SEARCH_URL = f"{settings.SPOTIFY_API_BASE}/search"
+
+
+def mock_token(expires_in=3600):
+    responses.add(
+        responses.POST,
+        TOKEN_URL,
+        json={"access_token": "tok", "expires_in": expires_in},
+        status=200,
+    )
+
+
+def search_payload(n=2):
+    return {
+        "tracks": {"items": [{"id": f"t{i}", "name": f"T{i}", "artists": []} for i in range(n)]}
+    }
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    monkeypatch.setattr("apps.recommendations.spotify.client.time.sleep", lambda *_: None)
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_token_is_cached():
+    mock_token()
+    client = SpotifyClient()
+    assert client.get_token() == "tok"
+    assert client.get_token() == "tok"
+    assert len(responses.calls) == 1
+    from django.core.cache import cache
+
+    assert cache.get(TOKEN_CACHE_KEY) == "tok"
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_missing_credentials_raise(settings):
+    settings.SPOTIFY_CLIENT_ID = ""
+    with pytest.raises(SpotifyAuthError):
+        SpotifyClient().get_token()
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_search_persists_to_db_cache_and_skips_network_on_repeat():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(), status=200)
+    client = SpotifyClient()
+
+    first = client.search_tracks('genre:"rock"', limit=5)
+    second = client.search_tracks('genre:"rock"', limit=5)
+
+    assert [t["id"] for t in first] == ["t0", "t1"]
+    assert first == second
+    assert SpotifyCache.objects.filter(endpoint="search_tracks").count() == 1
+    # one token call + exactly one search call
+    assert sum(1 for c in responses.calls if c.request.method == "GET") == 1
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_expired_db_cache_refetches():
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(3), status=200)
+    client = SpotifyClient()
+
+    assert len(client.search_tracks("q")) == 1
+    SpotifyCache.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
+    assert len(client.search_tracks("q")) == 3
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_429_is_retried_honouring_retry_after():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, status=429, headers={"Retry-After": "2"})
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
+    assert len(SpotifyClient().search_tracks("q")) == 1
+    assert sum(1 for c in responses.calls if c.request.method == "GET") == 2
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_persistent_429_raises_rate_limited():
+    mock_token()
+    for _ in range(3):
+        responses.add(responses.GET, SEARCH_URL, status=429, headers={"Retry-After": "1"})
+    with pytest.raises(SpotifyRateLimited):
+        SpotifyClient().search_tracks("q")
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_5xx_retries_then_raises_unavailable():
+    mock_token()
+    for _ in range(3):
+        responses.add(responses.GET, SEARCH_URL, status=503)
+    with pytest.raises(SpotifyUnavailable):
+        SpotifyClient().search_tracks("q")
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_404_raises_not_found():
+    mock_token()
+    responses.add(responses.GET, f"{settings.SPOTIFY_API_BASE}/artists/x/top-tracks", status=404)
+    with pytest.raises(SpotifyNotFound):
+        SpotifyClient().artist_top_tracks("x")
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_401_refreshes_token_once():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, status=401)
+    responses.add(responses.POST, TOKEN_URL, json={"access_token": "tok2", "expires_in": 60})
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
+    assert len(SpotifyClient().search_tracks("q")) == 1
+    assert responses.calls[-1].request.headers["Authorization"] == "Bearer tok2"
