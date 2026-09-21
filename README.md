@@ -337,10 +337,15 @@ Spotify retired `GET /v1/recommendations` for applications created after Novembe
 | Preference | Spotify call |
 |-----------|--------------|
 | each genre | `GET /search?type=track&q=genre:"<genre>"` |
-| each artist | `GET /search?type=artist` to resolve the id, then `GET /artists/{id}/top-tracks` |
+| each artist | `GET /search?type=artist` to confirm the artist, then `GET /search?type=track&q=artist:"<name>"` |
 | each mood | mapped to genre terms (e.g. `chill → chill, ambient, lo-fi`) and searched as above |
 
-Candidates are de-duplicated by track id and scored as `seed_hits × 10 + popularity ÷ 10`, with a bonus for tracks from a favourite artist. Results are capped at 3 tracks per artist for variety and truncated to `RECS_DEFAULT_LIMIT` (20). A user with no preferences receives a `pop` fallback so the endpoint is never empty.
+These were verified live against a freshly created development-mode app (September 2026). Two further restrictions were found during that test and are handled:
+
+- `GET /artists/{id}/top-tracks` returns **403** for new apps, so artist seeds use a filtered track search instead. The client still exposes the legacy call for apps that have access.
+- Track objects returned by search **no longer include `popularity` or `preview_url`**. Scoring therefore also uses each track's position in Spotify's relevance-ordered results.
+
+Candidates are de-duplicated by track id and scored as `seed_hits × 10 + popularity ÷ 10 + relevance`, where relevance decays with position in the search results, plus a bonus for tracks from a favourite artist. Results are capped at 3 tracks per artist for variety and truncated to `RECS_DEFAULT_LIMIT` (20). A user with no preferences receives a `pop` fallback so the endpoint is never empty.
 
 The client is behind a small interface. If your Spotify app still has access to the legacy recommendations endpoint, it can be swapped in without touching the tasks or views.
 
@@ -366,7 +371,7 @@ SPOTIFY_MOCK=1
 
 The fixture (`apps/recommendations/spotify/mock_data.py`) holds real Spotify track ids, names and artists grouped by the same genre terms the engine searches, plus top tracks for the artists used by the demo users. Mock responses take the same shape as Spotify's and pass through the same cache layer, so the code path exercised is the real one apart from the HTTP call. The `source` field on recommendation rows and in the `GET /recommendations/{id}/` response makes mock output unmistakable.
 
-If the real client receives a `403`, it fails fast with a message pointing at the Premium requirement and `SPOTIFY_MOCK`, rather than retrying.
+If the real client receives a `403`, it fails fast with a message naming the endpoint and pointing at `SPOTIFY_MOCK`, rather than retrying. A 403 on a single artist lookup is tolerated and the build continues with the remaining seeds.
 
 ## Caching
 
@@ -428,7 +433,7 @@ pip install -r requirements.txt
 POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest
 ```
 
-The suite (70 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
+The suite (74 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
 
 ---
 
@@ -457,7 +462,8 @@ postman/           collection + environment
 ## Assumptions and limitations
 
 - **Spotify recommendations endpoint is deprecated** for new apps, so results come from search and artist top-tracks. Quality depends on Spotify search relevance for `genre:` queries; it is a reasonable proxy, not a collaborative-filtering engine.
-- **Live Spotify data requires a Premium-owned app.** Spotify blocks the Web API for free-account apps. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated without one; it is a demo fallback, clearly labelled via `source: mock_v1`, not a substitute for the integration.
+- **Live Spotify data depends on the app's account.** Some accounts see a "blocked from accessing the Web API" banner and get 403 on every call; others can create working development-mode apps. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated either way; it is a demo fallback, clearly labelled via `source: mock_v1`, not a substitute for the integration.
+- **Search results omit `popularity` and `preview_url`** for new apps, so `popularity` is reported as 0 and `preview_url` as null in live mode. Ranking compensates with search position.
 - **Client Credentials only.** The service never sees a user's Spotify library or listening history; recommendations reflect the preferences they type in.
 - **Genres are free text.** Spotify's genre-seed list endpoint is also deprecated, so genres are not validated. An unknown genre simply contributes no tracks.
 - **Moods are a fixed vocabulary** mapped to genre terms in `apps/recommendations/spotify/moods.py`.
