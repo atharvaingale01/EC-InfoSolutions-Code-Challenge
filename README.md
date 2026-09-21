@@ -21,6 +21,7 @@ A Django REST backend that recommends songs to users based on their stated genre
 - [Authentication](#authentication)
 - [API reference](#api-reference)
 - [Background processing](#background-processing)
+- [Recommendation engine](#recommendation-engine)
 - [Caching](#caching)
 - [Rate limiting](#rate-limiting)
 - [Analytics definitions](#analytics-definitions)
@@ -330,9 +331,34 @@ Celery with Redis as broker. Three tasks live in `apps/recommendations/tasks.py`
 
 Watch it work: `docker compose logs -f worker beat`.
 
-### How recommendations are built
+## Recommendation engine
 
-Spotify retired `GET /v1/recommendations` for applications created after November 2024, together with the genre-seed, related-artist and audio-feature endpoints. This service therefore synthesises recommendations from endpoints that remain available under the Client Credentials flow:
+Spotify no longer offers a recommendations endpoint to newly created apps, so the recommendation logic in this service is its own. It is a **content-based recommender over the user's stated preferences**, using Spotify's catalogue as the source of candidate tracks. It lives in `apps/recommendations/engine.py` and runs inside the Celery task.
+
+### Inputs
+
+Three preference lists on the user profile:
+
+| Preference | Example | How it is used |
+|-----------|---------|----------------|
+| `favorite_genres` | `["rock", "indie"]` | one track search per genre, filtered with Spotify's `genre:` operator |
+| `favorite_artists` | `["Radiohead"]` | artist search to confirm the name, then a track search filtered with `artist:` |
+| `moods` | `["chill"]` | each mood expands to genre terms (`chill → chill, ambient, lo-fi`), searched like genres |
+
+The mood vocabulary is fixed and lives in `apps/recommendations/spotify/moods.py`:
+
+| Mood | Genre terms |
+|------|-------------|
+| happy | pop, dance |
+| sad | acoustic, singer-songwriter |
+| chill | chill, ambient, lo-fi |
+| energetic | edm, rock, hip-hop |
+| focus | classical, instrumental |
+| romantic | r-n-b, soul |
+| party | dance, reggaeton |
+| workout | hip-hop, electronic |
+
+### Spotify calls
 
 | Preference | Spotify call |
 |-----------|--------------|
@@ -347,11 +373,55 @@ These were verified live against a freshly created development-mode app (Septemb
 - Track objects **no longer include `popularity`**, and `preview_url` is deprecated. Scoring therefore also uses each track's position in Spotify's relevance-ordered results.
 - `GET /search` now caps `limit` at 10 (previously 50). The client clamps to that ceiling.
 
-Candidates are de-duplicated by track id and scored as `seed_hits × 10 + popularity ÷ 10 + relevance`, where relevance decays with position in the search results, plus a bonus for tracks from a favourite artist. Results are capped at 3 tracks per artist for variety and truncated to `RECS_DEFAULT_LIMIT` (20). A user with no preferences receives a `pop` fallback so the endpoint is never empty.
+Every call goes through the persistent `SpotifyCache` table first, so users with overlapping tastes share results and the periodic refresh-all costs far fewer upstream calls than users × seeds.
 
-The client is behind a small interface. If your Spotify app still has access to the legacy recommendations endpoint, it can be swapped in without touching the tasks or views.
+### Ranking
 
----
+1. **Normalise.** Each Spotify track becomes a compact record: id, name, artists, album, external link, duration, the seed that produced it, and its position in that search's result list.
+2. **De-duplicate** by Spotify track id. A track found by several searches is kept once, and every seed that found it is recorded.
+3. **Score.**
+
+   ```
+   score = distinct_search_hits × 10
+         + 5   if any hit came from a favourite artist
+         + (10 − best_position) × 0.3   relevance within Spotify's ordering
+         + popularity ÷ 10              (0 for new apps; Spotify removed the field)
+   ```
+
+   Hits are counted per *distinct search query*, not per seed label. A favourite genre and a mood that expand to the same term are one piece of evidence, not two, so a favourite artist's own tracks are not out-scored by a doubly-labelled genre hit.
+4. **Diversify.** At most 3 tracks per primary artist.
+5. **Trim** to `RECS_DEFAULT_LIMIT` (20).
+6. **Fallback.** A user with no preferences gets a `pop` search so the endpoint is never empty.
+
+### Output
+
+Each recommended track carries its `seed` and `score`, which makes every result explainable:
+
+```json
+{ "spotify_id": "70LcF31zb1H0PyJoS1Sx1r", "name": "Creep", "artists": ["Radiohead"],
+  "album": "Pablo Honey", "external_url": "https://open.spotify.com/track/70LcF31zb1H0PyJoS1Sx1r",
+  "seed": "artist:Radiohead, genre:rock", "score": 28.0, "popularity": 0, "preview_url": null,
+  "duration_ms": 238640 }
+```
+
+### Live sample
+
+Output from the seeded demo users against the real Spotify API (development-mode app, September 2026):
+
+| User | Preferences | Top of the list |
+|------|-------------|-----------------|
+| Alice | rock, indie · Radiohead, Arctic Monkeys · chill | Creep, 505, Smells Like Teen Spirit, The Less I Know The Better |
+| Bob | hip-hop, r-n-b · Kendrick Lamar, Drake · energetic, party | Janice STFU, Not Like Us, LOVE., One Dance |
+| Carol | pop, dance · Dua Lipa, The Weeknd · happy | No Lie, Timeless, Don't Start Now, Starboy |
+| Dave | classical, jazz · Miles Davis · focus | Blue in Green, So What, 'Round Midnight, My Funny Valentine |
+| Eve | edm, electronic · Daft Punk, Fred again.. · workout | Get Lucky, Instant Crush, Victory Lap |
+
+### What it is not
+
+- Not collaborative filtering. Nothing is learned from other users' behaviour.
+- Not based on listening history. Client Credentials gives no access to a user's Spotify account.
+- Not audio-feature based. Spotify removed audio features for new apps.
+- Genre-only searches without a popularity signal can surface obscure tracks. Artist seeds are the strongest signal and are weighted accordingly; a user who lists at least one artist gets noticeably better results than one who lists genres alone.
 
 ## Spotify access and mock mode
 
