@@ -1,0 +1,56 @@
+# Development override. Layer it on top of the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   make dev
+#
+# Differences from the base stack:
+#   * source tree bind-mounted, Django runserver with autoreload
+#   * DEBUG on, dev settings, browsable API
+#   * Postgres / Redis / Django published on the host for local tooling
+#   * nginx is not started (Django is reached directly on :8000)
+#   * separate project name and volumes, so it can run next to the prod stack
+
+name: music-discovery-dev
+
+services:
+  db:
+    ports:
+      - "${DEV_DB_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "${DEV_REDIS_PORT:-6379}:6379"
+
+  web:
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_DEBUG: "1"
+      RUN_MIGRATIONS: "1"
+    volumes:
+      - .:/app
+      - dev_static:/app/staticfiles
+    ports:
+      - "${DEV_WEB_PORT:-8000}:8000"
+
+  worker:
+    command: ["celery", "-A", "config", "worker", "-l", "debug", "--concurrency=1"]
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_DEBUG: "1"
+    volumes:
+      - .:/app
+
+  beat:
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_DEBUG: "1"
+    volumes:
+      - .:/app
+
+  nginx:
+    # Not needed in dev; assigning a profile keeps it from starting by default.
+    profiles: ["edge"]
+
+volumes:
+  dev_static:

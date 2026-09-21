@@ -1,8 +1,9 @@
 .DEFAULT_GOAL := help
-COMPOSE ?= docker compose
-WEB     := $(COMPOSE) exec web
+COMPOSE     ?= docker compose
+COMPOSE_DEV ?= docker compose -f docker-compose.yml -f docker-compose.dev.yml
+WEB         := $(COMPOSE) exec web
 
-.PHONY: help env up down build restart logs ps migrate makemigrations superuser seed shell dbshell test lint fmt clean
+.PHONY: help env up down build restart logs ps dev dev-down dev-logs migrate makemigrations superuser seed shell dbshell test lint fmt clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -28,6 +29,16 @@ logs: ## Tail logs for all services
 
 ps: ## Show service status
 	$(COMPOSE) ps
+
+dev: env ## Start the dev stack (runserver autoreload, bind-mounted code, no nginx)
+	$(COMPOSE_DEV) up -d --build
+	@echo "Dev API: http://localhost:$${DEV_WEB_PORT:-8000}/   Docs: http://localhost:$${DEV_WEB_PORT:-8000}/api/docs/"
+
+dev-down: ## Stop the dev stack
+	$(COMPOSE_DEV) down
+
+dev-logs: ## Tail dev stack logs
+	$(COMPOSE_DEV) logs -f --tail=100
 
 migrate: ## Apply migrations
 	$(WEB) python manage.py migrate
