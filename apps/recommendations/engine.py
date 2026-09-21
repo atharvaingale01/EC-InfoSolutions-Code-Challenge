@@ -13,7 +13,7 @@ from collections import defaultdict
 
 from django.conf import settings
 
-from .spotify.client import SpotifyClient
+from .spotify import get_client
 from .spotify.exceptions import SpotifyNotFound
 from .spotify.moods import MOOD_MAP
 
@@ -46,7 +46,7 @@ def normalise_track(item: dict, seed: str) -> dict | None:
     }
 
 
-def collect_candidates(user, client: SpotifyClient) -> tuple[list[dict], dict]:
+def collect_candidates(user, client) -> tuple[list[dict], dict]:
     """Return (raw candidate tracks tagged by seed, seed_params snapshot)."""
     genres = list(user.favorite_genres or [])
     artists = list(user.favorite_artists or [])
@@ -93,6 +93,7 @@ def collect_candidates(user, client: SpotifyClient) -> tuple[list[dict], dict]:
         "moods": moods,
         "used_fallback": used_fallback,
         "market": client.market,
+        "source": getattr(client, "source", "search_v1"),
     }
     return candidates, seed_params
 
@@ -134,8 +135,9 @@ def rank(candidates: list[dict], limit: int) -> list[dict]:
     return result
 
 
-def build_recommendations(user, client: SpotifyClient | None = None, limit: int | None = None):
-    client = client or SpotifyClient()
+def build_recommendations(user, client=None, limit: int | None = None):
+    """Return (ranked tracks, seed_params). seed_params["source"] names the client used."""
+    client = client or get_client()
     limit = limit or settings.RECS_DEFAULT_LIMIT
     candidates, seed_params = collect_candidates(user, client)
     tracks = rank(candidates, limit)

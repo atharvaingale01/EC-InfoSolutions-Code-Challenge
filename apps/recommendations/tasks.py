@@ -70,7 +70,7 @@ def refresh_user_recommendations(self, user_id: str, recommendation_id: str | No
         rec.mark_failed(f"{type(exc).__name__}: {exc}")
         return {"status": "failed", "error": str(exc)}
 
-    rec.mark_ready(tracks, seed_params)
+    rec.mark_ready(tracks, seed_params, source=seed_params.get("source", "search_v1"))
     cache.set(recs_cache_key(user.pk), cache_payload(rec), settings.RECS_CACHE_TTL_SECONDS)
     logger.info("Recommendations ready for %s: %d tracks", user.email, len(tracks))
     return {"status": "ready", "recommendation_id": str(rec.id), "count": len(tracks)}

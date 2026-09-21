@@ -185,6 +185,8 @@ SPOTIFY_CLIENT_SECRET = env("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_MARKET = env("SPOTIFY_MARKET", "US")
 SPOTIFY_CACHE_TTL_SECONDS = env_int("SPOTIFY_CACHE_TTL_SECONDS", 21600)
 SPOTIFY_USE_RECOMMENDATIONS_ENDPOINT = env_bool("SPOTIFY_USE_RECOMMENDATIONS_ENDPOINT", False)
+# Serve fixture data instead of calling Spotify (for evaluation without a Premium-owned app).
+SPOTIFY_MOCK = env_bool("SPOTIFY_MOCK", False)
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 
