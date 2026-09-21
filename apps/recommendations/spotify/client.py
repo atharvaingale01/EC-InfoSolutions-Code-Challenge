@@ -31,6 +31,8 @@ MAX_ATTEMPTS = 3
 
 
 class SpotifyClient:
+    source = "search_v1"
+
     def __init__(self, session: requests.Session | None = None):
         self.session = session or requests.Session()
         self.client_id = settings.SPOTIFY_CLIENT_ID
@@ -79,6 +81,15 @@ class SpotifyClient:
             if resp.status_code == 401 and attempt == 1:
                 token = self.get_token(force=True)
                 continue
+            if resp.status_code == 403:
+                # Spotify blocks the Web API for apps whose owner has no Premium
+                # subscription (and for apps in development mode calling
+                # restricted endpoints). Retrying cannot help.
+                raise SpotifyAuthError(
+                    "Spotify returned 403: Web API access is blocked for this app. "
+                    "The app owner needs Spotify Premium, or set SPOTIFY_MOCK=1 for "
+                    "fixture-backed recommendations."
+                )
             if resp.status_code == 404:
                 raise SpotifyNotFound(f"{path} returned 404")
             if resp.status_code == 429:
