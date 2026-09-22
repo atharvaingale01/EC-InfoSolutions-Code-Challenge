@@ -377,6 +377,15 @@ These were verified live against a freshly created development-mode app (Septemb
 
 Every call goes through the persistent `SpotifyCache` table first, so users with overlapping tastes share results and the periodic refresh-all costs far fewer upstream calls than users × seeds.
 
+### Candidate pool
+
+Spotify caps every search at 10 results, so the engine pages with `offset` to build a wider pool: 20 tracks per favourite genre, 10 per favourite artist, 10 per mood term. Each page is a separate cached call.
+
+When the pool is still thin, for example a profile with a single artist or a niche genre, two more steps run in order:
+
+1. **Similar-artist expansion.** The artists that surfaced most often in the pool but were not asked for (up to 3) get their own track search. These tracks are labelled `similar:<artist>` and always rank below anything a user seed produced.
+2. **Padding.** If the pool is still short of the requested size, a `pop` search fills the remainder, labelled `fallback:pop` and ranked last.
+
 ### Ranking
 
 1. **Normalise.** Each Spotify track becomes a compact record: id, name, artists, album, external link, duration, the seed that produced it, and its position in that search's result list.
@@ -391,9 +400,9 @@ Every call goes through the persistent `SpotifyCache` table first, so users with
    ```
 
    Hits are counted per *distinct search query*, not per seed label. A favourite genre and a mood that expand to the same term are one piece of evidence, not two, so a favourite artist's own tracks are not out-scored by a doubly-labelled genre hit.
-4. **Diversify.** At most 3 tracks per primary artist.
-5. **Trim** to `RECS_DEFAULT_LIMIT` (20).
-6. **Fallback.** A user with no preferences gets a `pop` search so the endpoint is never empty.
+4. **Order by intent, then score.** Tracks from the user's own seeds come first, then similar-artist tracks, then padding. Within each group, higher score first.
+5. **Diversify.** At most 3 tracks per artist, raised to 5 for artists the user explicitly listed.
+6. **Trim** to `RECS_DEFAULT_LIMIT` (20).
 
 ### Output
 
