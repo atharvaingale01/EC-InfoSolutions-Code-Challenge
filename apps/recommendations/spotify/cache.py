@@ -2,13 +2,17 @@
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from ..models import SpotifyCache
+
+logger = logging.getLogger(__name__)
 
 
 def make_cache_key(endpoint: str, params: dict) -> str:
@@ -28,13 +32,17 @@ def cached_get(endpoint: str, params: dict, fetch: Callable[[], dict]) -> dict:
 
     response = fetch()
     ttl = timedelta(seconds=settings.SPOTIFY_CACHE_TTL_SECONDS)
-    SpotifyCache.objects.update_or_create(
-        cache_key=key,
-        defaults={
-            "endpoint": endpoint,
-            "params": params,
-            "response": response,
-            "expires_at": timezone.now() + ttl,
-        },
-    )
+    defaults = {
+        "endpoint": endpoint,
+        "params": params,
+        "response": response,
+        "expires_at": timezone.now() + ttl,
+    }
+    try:
+        with transaction.atomic():
+            SpotifyCache.objects.update_or_create(cache_key=key, defaults=defaults)
+    except IntegrityError:
+        # Another worker inserted the same key between our lookup and write.
+        # Its response is equivalent; keep ours for this call and move on.
+        logger.debug("SpotifyCache race on %s; another worker won", key[:8])
     return response
