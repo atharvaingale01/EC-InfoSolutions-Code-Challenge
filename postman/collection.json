@@ -38,7 +38,7 @@
             "description": "No token \u2192 registers. Same route with a token updates your own profile.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"Password123!\",\n  \"name\": \"New User\",\n  \"favorite_genres\": [\n    \"rock\",\n    \"indie\"\n  ],\n  \"favorite_artists\": [\n    \"Radiohead\"\n  ],\n  \"moods\": [\n    \"chill\"\n  ]\n}"
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"Password123!\",\n  \"name\": \"New User\",\n  \"favorite_genres\": [\n    \"bollywood\",\n    \"indian pop\"\n  ],\n  \"favorite_artists\": [\n    \"Arijit Singh\"\n  ],\n  \"moods\": [\n    \"romantic\"\n  ]\n}"
             },
             "auth": {
               "type": "noauth"
@@ -151,7 +151,7 @@
             "description": "Partial update of the caller's own profile. Triggers a recommendation refresh.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Alice Updated\",\n  \"favorite_genres\": [\n    \"rock\",\n    \"shoegaze\"\n  ],\n  \"moods\": [\n    \"chill\",\n    \"focus\"\n  ]\n}"
+              "raw": "{\n  \"name\": \"Aarav Updated\",\n  \"favorite_genres\": [\n    \"punjabi\",\n    \"bhangra\"\n  ],\n  \"moods\": [\n    \"party\",\n    \"energetic\"\n  ]\n}"
             }
           },
           "response": [],
@@ -222,7 +222,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"track_id\": \"6b2oQwSGFkzsMtQruIWm2p\",\n  \"track_name\": \"Creep\",\n  \"artist_name\": \"Radiohead\",\n  \"action\": \"play\"\n}"
+              "raw": "{\n  \"track_id\": \"6WlARP6h4CDVOcY386wW0W\",\n  \"track_name\": \"Sitaare (From \\\"Ikkis\\\")\",\n  \"artist_name\": \"Arijit Singh\",\n  \"action\": \"play\"\n}"
             }
           },
           "response": []
@@ -241,7 +241,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"track_id\": \"6b2oQwSGFkzsMtQruIWm2p\",\n  \"track_name\": \"Creep\",\n  \"artist_name\": \"Radiohead\",\n  \"action\": \"like\"\n}"
+              "raw": "{\n  \"track_id\": \"6WlARP6h4CDVOcY386wW0W\",\n  \"track_name\": \"Sitaare (From \\\"Ikkis\\\")\",\n  \"artist_name\": \"Arijit Singh\",\n  \"action\": \"like\"\n}"
             }
           },
           "response": []
@@ -260,7 +260,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"track_id\": \"0VjIjW4GlUZAMYd2vXMi3b\",\n  \"track_name\": \"Blinding Lights\",\n  \"artist_name\": \"The Weeknd\",\n  \"action\": \"skip\"\n}"
+              "raw": "{\n  \"track_id\": \"7tbzfR8ZvZzJEzy6v0d6el\",\n  \"track_name\": \"Liggi\",\n  \"artist_name\": \"Ritviz\",\n  \"action\": \"skip\"\n}"
             }
           },
           "response": []
