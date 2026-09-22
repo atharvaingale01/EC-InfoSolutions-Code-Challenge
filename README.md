@@ -90,6 +90,7 @@ make dev-down
 |----------|---------|
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | Spotify app credentials |
 | `SPOTIFY_MOCK` | `1` to serve fixture tracks with no Spotify calls |
+| `SPOTIFY_MARKET` | Country for availability, regional releases and mood mapping (`IN` matches the demo data) |
 | `RECS_REFRESH_INTERVAL_MINUTES` | Beat interval for refreshing all users (default 360) |
 | `RECS_CACHE_TTL_SECONDS` | Redis TTL for a user's recommendation list (default 3600) |
 | `THROTTLE_*` | Per-user rate limits (DRF) |
@@ -138,7 +139,16 @@ curl http://localhost/users/<user_id>/ -H 'Authorization: Bearer <access>'
 
 Access tokens last 60 minutes. Refresh with `POST /auth/token/refresh/` and `{"refresh": "..."}`.
 
-Demo accounts from `make seed`, all with password `Password123!`: `alice@example.com`, `bob@example.com`, `carol@example.com`, `dave@example.com`, `eve@example.com`, and `admin@example.com` (staff flag only, no admin model permissions). These credentials are public by design; run `seed_demo --flush` before exposing the stack beyond your machine.
+Demo accounts from `make seed`, all with password `Password123!`. The five listeners have Indian tastes, so set `SPOTIFY_MARKET=IN` (the example default) for matching regional results. These credentials are public by design; run `seed_demo --flush` before exposing the stack beyond your machine.
+
+| Email | Genres | Artists | Moods |
+|-------|--------|---------|-------|
+| aarav@example.com | bollywood, indian pop | Arijit Singh, Pritam | romantic |
+| bhavya@example.com | punjabi, bhangra | Diljit Dosanjh, Karan Aujla | party, energetic |
+| charvi@example.com | indian indie, indian pop | Prateek Kuhad, Anuv Jain | chill |
+| dev@example.com | hindustani classical, carnatic | A.R. Rahman, Shreya Ghoshal | focus |
+| esha@example.com | desi pop, indian folk | DIVINE, Ritviz | workout |
+| admin@example.com | staff flag only, no admin model permissions | | |
 
 **Who can call what**
 
@@ -271,7 +281,7 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 
 ```
 2026-09-22 10:00:01 INFO apps.requests rid=3f2a… task=- POST /recommendations/…/refresh/ -> 202 in 14ms
-2026-09-22 10:00:04 INFO apps.recommendations.tasks rid=3f2a… task=6cc5… Recommendations ready for alice@example.com: 20 tracks
+2026-09-22 10:00:04 INFO apps.recommendations.tasks rid=3f2a… task=6cc5… Recommendations ready for aarav@example.com: 20 tracks
 ```
 
 - **Access log**: one line per request from `apps.requests` with method, path, status, duration and user id (`/health/` is excluded to keep the compose healthcheck quiet).
@@ -291,14 +301,14 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 
 **Spotify**
 
-- **Spotify's recommendations endpoint is not available to new apps** (removed November 2024). Recommendations are therefore built by this service: track searches filtered by `genre:` and `artist:`, moods mapped to genre terms, results merged, scored by how many searches returned each track plus a bonus for favourite artists, capped per artist for variety. It is content-based on stated preferences, not collaborative filtering.
+- **Spotify's recommendations endpoint is not available to new apps** (removed November 2024). Recommendations are therefore built by this service: track searches filtered by `genre:` and `artist:`, moods mapped to market-specific genre terms and limited to the last 15 years, results merged and de-duplicated (also across alternate releases of the same song), then ordered by intent tier: tracks by an artist the user named first, then genre and mood hits, then artists discovered from those results, then padding. Within a tier, more search hits and a higher position in Spotify's results rank higher; at most 3 tracks per artist (5 for named artists). It is content-based on stated preferences, not collaborative filtering.
 - **Artist top-tracks was removed in February 2026** and returns 403. Artist seeds use an artist-filtered track search instead.
 - **Search results no longer include `popularity` or `preview_url`.** `popularity` is reported as 0 and ranking uses each track's position in Spotify's relevance order instead. Genre-only searches can therefore surface obscure tracks; listing at least one artist gives noticeably better results.
 - **Search is capped at 10 results per call.** The engine pages with `offset` to widen the pool.
 - **Live data requires a Premium-owned app.** Spotify requires this for all development-mode apps since February 2026. Free accounts see the app as blocked and every call returns 403. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated regardless.
 - **Client Credentials flow only.** The service never sees a user's Spotify library or listening history.
 - **Genres are free text**, since Spotify's genre-seed list is also gone. An unknown genre simply contributes nothing.
-- **Moods are a fixed vocabulary** mapped to genre terms in `apps/recommendations/spotify/moods.py`.
+- **Moods are a fixed vocabulary** mapped to genre terms per market in `apps/recommendations/spotify/moods.py` (India and a default map today).
 
 **Service**
 
@@ -321,7 +331,7 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 | Extra | Why |
 |-------|-----|
 | **JWT and Basic authentication** | Per-user throttling needs an identity; Basic lets Postman and curl skip the token step |
-| **`seed_demo` command** (`make seed`) | 5 users with distinct tastes, a staff user and 50 activity rows, so every endpoint returns data immediately. Idempotent; `--flush` recreates, `--no-refresh` skips Spotify |
+| **`seed_demo` command** (`make seed`) | 5 listeners with distinct Indian tastes, a staff user and 50 activity rows on real tracks, so every endpoint returns data immediately. Idempotent; `--flush` recreates, `--no-refresh` skips Spotify |
 | **Mock Spotify mode** (`SPOTIFY_MOCK=1`) | Fixture of real track data served through the same client interface and cache. Labelled `source: mock_v1` so it cannot be mistaken for live output |
 | **Development compose override** (`make dev`) | runserver with autoreload, code bind-mounted, DB and Redis published, no nginx |
 | **Swagger UI and OpenAPI schema** | Generated from the views; `make lint` validates it with `spectacular --validate --fail-on-warn` |
@@ -330,5 +340,5 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 | **Function-based views throughout** | Every endpoint is an `@api_view` function; classes are used for models, serializers, permissions, throttles and clients |
 | **Persistent Spotify cache table** | Every Spotify response stored in PostgreSQL with an expiry, on top of the Redis layer, so rebuilds for overlapping tastes cost few upstream calls |
 | **Celery Beat cache purge** | Daily cleanup of expired Spotify cache rows |
-| **123 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
+| **129 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
 | **Makefile and Postman collection** | One-command setup; collection with login script and both auth styles |
