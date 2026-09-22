@@ -19,7 +19,7 @@ Stack: Python 3.12, Django 5.2, Django REST Framework, PostgreSQL 16, Redis 7, C
 git clone https://github.com/atharvaingale01/EC-InfoSolutions-Code-Challenge.git
 cd EC-InfoSolutions-Code-Challenge
 
-cp .env.example .env
+make env     # copies .env.example to .env and generates a random DJANGO_SECRET_KEY
 # edit .env: set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET, or set SPOTIFY_MOCK=1
 
 make up      # builds images; starts db, redis, web, worker, beat, nginx
@@ -31,6 +31,9 @@ The API is on <http://localhost/>. Swagger UI is at <http://localhost/api/docs/>
 Without `make`:
 
 ```bash
+cp .env.example .env
+# set DJANGO_SECRET_KEY to any long random string (the placeholder is rejected by the
+# production settings), then set the Spotify credentials or SPOTIFY_MOCK=1
 docker compose up -d --build
 docker compose exec web python manage.py seed_demo
 ```
@@ -50,6 +53,7 @@ docker compose exec web python manage.py seed_demo
 
 | Command | What it does |
 |---------|--------------|
+| `make env` | Create `.env` from the example with a generated secret key |
 | `make up` / `make down` | Start / stop the stack |
 | `make logs` | Tail all service logs |
 | `make seed` | Create demo data (idempotent) |
@@ -70,6 +74,7 @@ docker compose exec web python manage.py seed_demo
 | `THROTTLE_*` | Per-user rate limits (DRF) |
 | `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST` | Per-IP edge rate limit (nginx) |
 | `NGINX_PORT` | Host port for the API (default 80) |
+| `DJANGO_SECRET_KEY` | Required for the production settings; the placeholder is rejected |
 
 **Running tests locally** (outside Docker) needs a reachable Postgres:
 
@@ -259,6 +264,9 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 - nginx serves plain HTTP, which is fine locally. Basic auth over HTTP sends credentials in the clear; TLS is required before real deployment.
 - Analytics are computed on read with ORM aggregates. Fine at this scale; a rollup table would be needed under real load.
 - After a profile change the previous list is served with `refresh_pending: true` until the rebuild finishes.
+- Redis runs without persistence. A Redis restart drops the cache (rebuilt on demand) and any queued tasks (re-queued by the next scheduled refresh).
+- A build that never completes, for example because the broker lost the task, leaves a `pending` row. The scheduled refresh marks rows older than 15 minutes as failed and `refresh_pending` ignores rows older than 10 minutes, so the flag cannot stick.
+- Production settings refuse to start with the placeholder `DJANGO_SECRET_KEY`. Generate one as described in `.env.example`, or set `DJANGO_ALLOW_INSECURE_SECRET=1` for a throwaway local run.
 - Single Postgres and single Redis, no high availability.
 
 ---
