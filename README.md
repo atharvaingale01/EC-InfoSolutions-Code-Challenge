@@ -67,7 +67,8 @@ docker compose exec web python manage.py seed_demo
 | `SPOTIFY_MOCK` | `1` to serve fixture tracks with no Spotify calls |
 | `RECS_REFRESH_INTERVAL_MINUTES` | Beat interval for refreshing all users (default 360) |
 | `RECS_CACHE_TTL_SECONDS` | Redis TTL for a user's recommendation list (default 3600) |
-| `THROTTLE_*` | Per-user rate limits |
+| `THROTTLE_*` | Per-user rate limits (DRF) |
+| `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST` | Per-IP edge rate limit (nginx) |
 | `NGINX_PORT` | Host port for the API (default 80) |
 
 **Running tests locally** (outside Docker) needs a reachable Postgres:
@@ -230,7 +231,7 @@ Genres come from user preferences; artists and tracks from activity inside the w
 
 ### Rate limits
 
-Per user, backed by Redis: 120 requests/min overall, 5/min for refresh triggers, 60/min for activity writes, 20/min for anonymous calls. Throttled responses return `429` with `Retry-After`. nginx adds a coarse 30 requests/second per IP in front.
+Per user, backed by Redis: 120 requests/min overall, 5/min for refresh triggers, 60/min for activity writes, 20/min for anonymous calls. Throttled responses return `429` with `Retry-After`. nginx adds a coarse 30 requests/second per IP with a burst of 50 in front. All five limits are set in `.env` (`THROTTLE_*`, `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST`).
 
 ### Postman
 
