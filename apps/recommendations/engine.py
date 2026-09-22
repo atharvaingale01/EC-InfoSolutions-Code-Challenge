@@ -23,15 +23,20 @@ from .spotify.moods import MOOD_MAP
 
 logger = logging.getLogger(__name__)
 
-GENRE_SEARCH_LIMIT = 10
-ARTIST_TOP_LIMIT = 10
-MOOD_SEARCH_LIMIT = 5
-MAX_PER_ARTIST = 3
+# Spotify caps each search at 10 results, so wider pools are paged (offset).
+GENRE_SEARCH_LIMIT = 20  # two pages per favourite genre
+ARTIST_TOP_LIMIT = 10  # one page per favourite artist
+MOOD_SEARCH_LIMIT = 10  # one page per mood term
+SIMILAR_ARTISTS = 3  # discovery expansion when the pool is thin
+SIMILAR_TRACK_LIMIT = 10
+MAX_PER_ARTIST = 3  # diversity cap for artists the user did not ask for
+MAX_PER_FAVOURITE_ARTIST = 5  # the user asked for these; let more through
 FALLBACK_GENRE = "pop"
 
 SEED_HIT_WEIGHT = 10.0
 ARTIST_SEED_BONUS = 5.0
 POSITION_WEIGHT = 0.3  # per rank step from the top of a search result list
+RELEVANCE_SPAN = 10  # positions beyond this add nothing
 
 
 def normalise_track(item: dict, seed: str, position: int = 0, query: str = "") -> dict | None:
@@ -53,7 +58,7 @@ def normalise_track(item: dict, seed: str, position: int = 0, query: str = "") -
     }
 
 
-def collect_candidates(user, client) -> tuple[list[dict], dict]:
+def collect_candidates(user, client, limit: int | None = None) -> tuple[list[dict], dict]:
     """Return (raw candidate tracks tagged by seed, seed_params snapshot)."""
     genres = list(user.favorite_genres or [])
     artists = list(user.favorite_artists or [])
@@ -63,7 +68,7 @@ def collect_candidates(user, client) -> tuple[list[dict], dict]:
     resolved_artists: dict[str, str | None] = {}
 
     def search(query, limit, seed):
-        for position, item in enumerate(client.search_tracks(query, limit=limit)):
+        for position, item in enumerate(client.search_tracks_paged(query, wanted=limit)):
             if track := normalise_track(item, seed, position, query):
                 candidates.append(track)
 
@@ -94,8 +99,31 @@ def collect_candidates(user, client) -> tuple[list[dict], dict]:
         for term in MOOD_MAP.get(mood, []):
             search(f'genre:"{term}"', MOOD_SEARCH_LIMIT, f"mood:{mood}")
 
+    # Discovery expansion: when the pool is thin (few seeds, or Spotify's 10-per-search
+    # cap), pull tracks from the artists that surfaced most often but were not asked for.
+    similar: list[str] = []
+    wanted_pool = 2 * (limit or settings.RECS_DEFAULT_LIMIT)
+    if candidates and len(candidates) < wanted_pool:
+        favourites = {a.lower() for a in artists}
+        counts = defaultdict(int)
+        for track in candidates:
+            if track["artists"] and track["artists"][0].lower() not in favourites:
+                counts[track["artists"][0]] += 1
+        similar = [name for name, _ in sorted(counts.items(), key=lambda kv: -kv[1])][
+            :SIMILAR_ARTISTS
+        ]
+        for name in similar:
+            try:
+                items = client.artist_tracks(name, limit=SIMILAR_TRACK_LIMIT)
+            except (SpotifyNotFound, SpotifyForbidden):
+                items = []
+            query = f'artist:"{name}"'
+            for position, item in enumerate(items):
+                if track := normalise_track(item, f"similar:{name}", position, query):
+                    candidates.append(track)
+
     used_fallback = False
-    if not candidates:
+    if len(candidates) < (limit or settings.RECS_DEFAULT_LIMIT):
         used_fallback = True
         search(f'genre:"{FALLBACK_GENRE}"', GENRE_SEARCH_LIMIT, f"fallback:{FALLBACK_GENRE}")
 
@@ -104,6 +132,7 @@ def collect_candidates(user, client) -> tuple[list[dict], dict]:
         "artists": artists,
         "artist_ids": resolved_artists,
         "moods": moods,
+        "similar_artists": similar,
         "used_fallback": used_fallback,
         "market": client.market,
         "source": getattr(client, "source", "search_v1"),
@@ -137,9 +166,18 @@ def rank(candidates: list[dict], limit: int) -> list[dict]:
         if tid not in merged:
             merged[tid] = dict(track)
 
+    # Seeds that carry no user intent rank below everything the user asked for.
+    def priority(tid):
+        labels = seed_labels[tid]
+        if any(s.startswith(("genre:", "artist:", "mood:")) for s in labels):
+            return 0
+        if any(s.startswith("similar:") for s in labels):
+            return 1
+        return 2  # fallback
+
     for tid, track in merged.items():
         hits = len(query_hits[tid])
-        relevance = max(0, ARTIST_TOP_LIMIT - best_position[tid]) * POSITION_WEIGHT
+        relevance = max(0, RELEVANCE_SPAN - best_position[tid]) * POSITION_WEIGHT
         score = hits * SEED_HIT_WEIGHT + track["popularity"] / 10.0 + relevance
         if tid in artist_seeded:
             score += ARTIST_SEED_BONUS
@@ -148,13 +186,16 @@ def rank(candidates: list[dict], limit: int) -> list[dict]:
         track.pop("position", None)
         track.pop("query", None)
 
-    ordered = sorted(merged.values(), key=lambda t: (-t["score"], t["name"]))
+    ordered = sorted(
+        merged.values(), key=lambda t: (priority(t["spotify_id"]), -t["score"], t["name"])
+    )
 
     per_artist: dict[str, int] = defaultdict(int)
     result: list[dict] = []
     for track in ordered:
         primary = track["artists"][0] if track["artists"] else ""
-        if per_artist[primary] >= MAX_PER_ARTIST:
+        cap = MAX_PER_FAVOURITE_ARTIST if track["spotify_id"] in artist_seeded else MAX_PER_ARTIST
+        if per_artist[primary] >= cap:
             continue
         per_artist[primary] += 1
         result.append(track)
@@ -167,7 +208,7 @@ def build_recommendations(user, client=None, limit: int | None = None):
     """Return (ranked tracks, seed_params). seed_params["source"] names the client used."""
     client = client or get_client()
     limit = limit or settings.RECS_DEFAULT_LIMIT
-    candidates, seed_params = collect_candidates(user, client)
+    candidates, seed_params = collect_candidates(user, client, limit)
     tracks = rank(candidates, limit)
     seed_params["candidates"] = len(candidates)
     return tracks, seed_params

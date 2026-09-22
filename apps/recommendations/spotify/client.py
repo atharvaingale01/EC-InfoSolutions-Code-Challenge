@@ -122,11 +122,25 @@ class SpotifyClient:
 
     # -- endpoints ----------------------------------------------------------
 
-    def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
+    def search_tracks(self, query: str, limit: int = 10, offset: int = 0) -> list[dict]:
         limit = max(1, min(limit, SEARCH_MAX_LIMIT))
         params = {"q": query, "type": "track", "limit": limit, "market": self.market}
+        if offset:
+            params["offset"] = offset
         data = self._cached("search_tracks", "/search", params)
         return data.get("tracks", {}).get("items", []) or []
+
+    def search_tracks_paged(self, query: str, wanted: int) -> list[dict]:
+        """Collect up to `wanted` tracks by paging through 10-item search results."""
+        items: list[dict] = []
+        offset = 0
+        while len(items) < wanted:
+            page = self.search_tracks(query, limit=SEARCH_MAX_LIMIT, offset=offset)
+            items.extend(page)
+            if len(page) < SEARCH_MAX_LIMIT:
+                break
+            offset += SEARCH_MAX_LIMIT
+        return items[:wanted]
 
     def search_artist(self, name: str) -> dict | None:
         params = {"q": name, "type": "artist", "limit": 1, "market": self.market}
@@ -136,7 +150,7 @@ class SpotifyClient:
 
     def artist_tracks(self, artist_name: str, limit: int = 10) -> list[dict]:
         """Tracks by an artist via search (top-tracks endpoint is 403 for new apps)."""
-        return self.search_tracks(f'artist:"{artist_name}"', limit=limit)
+        return self.search_tracks_paged(f'artist:"{artist_name}"', wanted=limit)
 
     def artist_top_tracks(self, artist_id: str) -> list[dict]:
         """Legacy endpoint kept for apps that still have access; 403 -> SpotifyForbidden."""
