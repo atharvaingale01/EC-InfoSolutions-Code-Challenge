@@ -52,6 +52,25 @@ class TestRegister:
         assert resp.status_code == 400
         assert "moods" in resp.json()["errors"]
 
+    def test_password_similar_to_email_rejected(self, api_client):
+        body = {**REGISTER_BODY, "email": "supersecret@example.com", "password": "supersecret1"}
+        resp = api_client.post("/users/", body, format="json")
+        assert resp.status_code == 400
+        assert "password" in resp.json()["errors"]
+
+    def test_concurrent_duplicate_registration_is_400(self, api_client, monkeypatch):
+        from django.db import IntegrityError
+
+        from apps.users import serializers as user_serializers
+
+        def race(*a, **k):
+            raise IntegrityError("duplicate key value violates unique constraint")
+
+        monkeypatch.setattr(user_serializers.User.objects, "create_user", race)
+        resp = api_client.post("/users/", REGISTER_BODY, format="json")
+        assert resp.status_code == 400
+        assert "email" in resp.json()["errors"]
+
     def test_missing_password_rejected(self, api_client):
         body = {k: v for k, v in REGISTER_BODY.items() if k != "password"}
         resp = api_client.post("/users/", body, format="json")
@@ -78,6 +97,23 @@ class TestUpdate:
         auth_client.post("/users/", {"moods": ["happy"]}, format="json")
         rec = Recommendation.objects.get(user=user)
         assert rec.status == "ready" and rec.task_id  # row created up front, then built
+
+    def test_noop_update_does_not_queue_a_rebuild(self, auth_client, user):
+        auth_client.post("/users/", {}, format="json")
+        auth_client.post("/users/", {"name": "Alice"}, format="json")  # non-preference field
+        auth_client.post("/users/", {"favorite_genres": ["rock", "indie"]}, format="json")  # same
+        assert Recommendation.objects.filter(user=user).count() == 0
+
+    def test_update_reuses_inflight_pending_build(self, auth_client, user):
+        Recommendation.objects.create(user=user)  # a rebuild already queued
+        auth_client.post("/users/", {"moods": ["party"]}, format="json")
+        assert Recommendation.objects.filter(user=user).count() == 1
+
+    def test_artist_dedupe_is_case_insensitive(self, auth_client, user):
+        resp = auth_client.post(
+            "/users/", {"favorite_artists": ["Drake", "drake", " DRAKE "]}, format="json"
+        )
+        assert resp.json()["favorite_artists"] == ["Drake"]
 
     def test_update_marks_failed_when_broker_is_down(self, auth_client, user, monkeypatch):
         from apps.recommendations import tasks

@@ -90,6 +90,14 @@ class TestRetrieve:
         assert body["refresh_pending"] is True
         assert body["count"] > 0  # previous list still served
 
+    def test_stale_pending_row_does_not_flag_refresh_pending(self, auth_client, user):
+        auth_client.post(f"/recommendations/{user.pk}/refresh/")
+        stale = Recommendation.objects.create(user=user)
+        Recommendation.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(minutes=30)
+        )
+        assert auth_client.get(f"/recommendations/{user.pk}/").json()["refresh_pending"] is False
+
     def test_limit_param(self, auth_client, user):
         auth_client.post(f"/recommendations/{user.pk}/refresh/")
         resp = auth_client.get(f"/recommendations/{user.pk}/?limit=2")
@@ -138,6 +146,35 @@ class TestTask:
         result = refresh_all_recommendations.apply().get()
         assert result["queued"] == 2
         assert Recommendation.objects.filter(status="ready").count() == 2
+
+    def test_refresh_all_fails_stale_pending_and_skips_busy_users(self, user, other_user):
+        from apps.recommendations.tasks import refresh_all_recommendations
+
+        stale = Recommendation.objects.create(user=user)
+        Recommendation.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(hours=1)
+        )
+        Recommendation.objects.create(user=other_user)  # fresh, in flight
+
+        result = refresh_all_recommendations.apply().get()
+        stale.refresh_from_db()
+        assert stale.status == "failed" and "never completed" in stale.error
+        assert result == {"queued": 1, "skipped_busy": 1, "stale_failed": 1}
+        assert Recommendation.objects.filter(user=user, status="ready").count() == 1
+        assert Recommendation.objects.filter(user=other_user).count() == 1  # untouched
+
+    def test_soft_time_limit_marks_failed(self, user, monkeypatch):
+        from celery.exceptions import SoftTimeLimitExceeded
+
+        from apps.recommendations import tasks
+
+        def slow(*a, **k):
+            raise SoftTimeLimitExceeded()
+
+        monkeypatch.setattr(tasks, "build_recommendations", slow)
+        result = refresh_user_recommendations.apply(args=[str(user.pk)]).get()
+        assert result["status"] == "failed"
+        assert "exceeded" in Recommendation.objects.get(user=user).error
 
     def test_purge_expired_cache(self, db):
         from apps.recommendations.models import SpotifyCache

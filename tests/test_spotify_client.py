@@ -180,3 +180,16 @@ def test_paged_search_uses_offset_and_stops_on_short_page():
     assert len(items) == 14
     gets = [c.request.url for c in responses.calls if c.request.method == "GET"]
     assert len(gets) == 2 and "offset=10" in gets[1] and "offset" not in gets[0]
+
+
+@pytest.mark.django_db
+def test_cache_write_race_is_tolerated(monkeypatch):
+    from django.db import IntegrityError
+
+    from apps.recommendations.spotify import cache as cache_mod
+
+    def collide(*a, **k):
+        raise IntegrityError("duplicate key")
+
+    monkeypatch.setattr(cache_mod.SpotifyCache.objects, "update_or_create", collide)
+    assert cache_mod.cached_get("search_tracks", {"q": "x"}, lambda: {"ok": 1}) == {"ok": 1}
