@@ -19,10 +19,10 @@ from .serializers import (
     RecommendationPendingSerializer,
     RefreshAcceptedSerializer,
 )
-from .tasks import cache_payload, recs_cache_key, refresh_user_recommendations
+from .tasks import cache_payload, enqueue_refresh, recs_cache_key
 
 PENDING_DEDUPE_WINDOW = timedelta(minutes=2)
-STALE_PENDING_AFTER = timedelta(minutes=10)  # beyond this a pending row is treated as lost
+ENQUEUE_GATE_SECONDS = 5  # collapses double-clicks / parallel workers into one build
 
 
 @extend_schema(
@@ -37,31 +37,28 @@ def refresh_recommendations(request, user_id):
     """POST /recommendations/{user_id}/refresh/ — queue a background rebuild (202)."""
     user = get_object_or_404(User, pk=user_id, is_active=True)
 
-    recent_pending = (
-        Recommendation.objects.filter(
-            user=user,
-            status=Recommendation.Status.PENDING,
-            created_at__gte=timezone.now() - PENDING_DEDUPE_WINDOW,
+    def existing_pending():
+        return (
+            Recommendation.objects.filter(user=user)
+            .live_pending()
+            .filter(created_at__gte=timezone.now() - PENDING_DEDUPE_WINDOW)
+            .order_by("-created_at")
+            .first()
         )
-        .order_by("-created_at")
-        .first()
-    )
-    if recent_pending:
-        payload = {
-            "recommendation_id": recent_pending.id,
-            "task_id": recent_pending.task_id,
-            "status": "pending",
-        }
-        return Response(payload, status=status.HTTP_202_ACCEPTED)
 
-    rec = Recommendation.objects.create(user=user)
-    result = refresh_user_recommendations.delay(str(user.pk), str(rec.pk))
-    task_id = getattr(result, "id", None)
-    if task_id:
-        Recommendation.objects.filter(pk=rec.pk, task_id__isnull=True).update(task_id=task_id)
-    rec.refresh_from_db()
+    rec = existing_pending()
+    if rec is None:
+        # Two simultaneous triggers (double-click, two gunicorn workers) both see
+        # "no pending row"; the cache gate lets only one of them enqueue.
+        if cache.add(f"recs:enqueue:{user.pk}", 1, ENQUEUE_GATE_SECONDS):
+            rec = enqueue_refresh(user)
+            rec.refresh_from_db()
+        else:
+            rec = existing_pending()
+    if rec is None:  # gate held by a request that has not committed yet
+        return Response({"status": "pending", "recommendation_id": None}, status=202)
 
-    payload = {"recommendation_id": rec.id, "task_id": task_id, "status": rec.status}
+    payload = {"recommendation_id": rec.id, "task_id": rec.task_id, "status": rec.status}
     return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
@@ -85,31 +82,28 @@ def recommendation_list(request, user_id):
     get_object_or_404(User, pk=user_id)
     limit = _parse_limit(request.query_params.get("limit"))
 
-    refresh_pending = Recommendation.objects.filter(
-        user_id=user_id,
-        status=Recommendation.Status.PENDING,
-        created_at__gte=timezone.now() - STALE_PENDING_AFTER,
-    ).exists()
+    live_pending = Recommendation.objects.filter(user_id=user_id).live_pending()
+    refresh_pending = live_pending.exists()
 
     cached = cache.get(recs_cache_key(user_id))
     if cached:
         return Response(_shape(user_id, cached, limit, cached=True, pending=refresh_pending))
 
+    # "Latest" means the most recently *requested* build that is ready, not the
+    # one that happened to finish last, so a slow older build cannot win.
     latest_ready = (
         Recommendation.objects.filter(user_id=user_id, status=Recommendation.Status.READY)
-        .order_by("-completed_at")
+        .order_by("-created_at")
         .first()
     )
     if latest_ready:
         payload = cache_payload(latest_ready)
-        cache.set(recs_cache_key(user_id), payload, settings.RECS_CACHE_TTL_SECONDS)
+        # add() not set(): if the worker wrote a newer payload between our SELECT
+        # and now, keep the worker's.
+        cache.add(recs_cache_key(user_id), payload, settings.RECS_CACHE_TTL_SECONDS)
         return Response(_shape(user_id, payload, limit, cached=False, pending=refresh_pending))
 
-    pending = (
-        Recommendation.objects.filter(user_id=user_id, status=Recommendation.Status.PENDING)
-        .order_by("-created_at")
-        .first()
-    )
+    pending = live_pending.order_by("-created_at").first()
     if pending:
         return Response(
             {"status": "pending", "recommendation_id": pending.id},

@@ -63,15 +63,19 @@ class Command(BaseCommand):
         self.stdout.write(f"Activity rows created: {activity_count}")
 
         if not options["no_refresh"]:
-            from apps.recommendations.tasks import refresh_user_recommendations
+            from apps.recommendations.tasks import enqueue_refresh
 
             for user in created_users:
-                transaction.on_commit(
-                    lambda uid=str(user.pk): refresh_user_recommendations.delay(uid)
-                )
+                transaction.on_commit(lambda u=user: enqueue_refresh(u))
             self.stdout.write(f"Queued recommendation refresh for {len(created_users)} users.")
 
         self.stdout.write(self.style.SUCCESS(f"Done. Demo password: {DEMO_PASSWORD}"))
+        self.stdout.write(
+            self.style.WARNING(
+                "Demo accounts use a published password. Remove them (seed_demo --flush) "
+                "before exposing this stack beyond your machine."
+            )
+        )
 
     @staticmethod
     def _get_or_create(spec):
@@ -80,10 +84,6 @@ class Command(BaseCommand):
         if user:
             return user, False
         fields = {k: v for k, v in spec.items() if k != "email"}
-        if fields.pop("is_superuser", False):
-            return User.objects.create_superuser(
-                email=email, password=DEMO_PASSWORD, **fields
-            ), True
         return User.objects.create_user(email=email, password=DEMO_PASSWORD, **fields), True
 
     @staticmethod
@@ -105,9 +105,12 @@ class Command(BaseCommand):
                         track_name=track[1],
                         artist_name=track[2],
                         action=action,
-                        created_at=now
-                        - timedelta(days=rng.randint(0, 13), hours=rng.randint(0, 23)),
                     )
                 )
         UserActivity.objects.bulk_create(rows)
+        for row in rows:
+            row.created_at = now - timedelta(days=rng.randint(0, 13), hours=rng.randint(0, 23))
+        # auto_now_add overrides created_at during bulk_create; write the spread
+        # timestamps back so trends over 1 / 7 / 14 days differ.
+        UserActivity.objects.bulk_update(rows, ["created_at"])
         return len(rows)

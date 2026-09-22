@@ -35,13 +35,13 @@ def user_create_or_update(request):
     Either path invalidates cached recommendations and queues a rebuild.
     """
     if request.user.is_authenticated:
-        before = _preferences(request.user)
+        before = request.user.preferences
         serializer = ProfileSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         # Only a real preference change earns a Spotify rebuild; otherwise a
         # no-op POST would sidestep the refresh throttle.
-        if _preferences(user) != before:
+        if user.preferences != before:
             on_preferences_changed(user)
         return Response(ProfileSerializer(user).data, status=status.HTTP_200_OK)
 
@@ -55,10 +55,6 @@ def user_create_or_update(request):
         ) from None
     on_preferences_changed(user)
     return Response(ProfileSerializer(user).data, status=status.HTTP_201_CREATED)
-
-
-def _preferences(user) -> tuple:
-    return (list(user.favorite_genres), list(user.favorite_artists), list(user.moods))
 
 
 @extend_schema(responses=ProfileSerializer, summary="Retrieve a user's profile and preferences")
