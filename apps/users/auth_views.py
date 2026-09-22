@@ -14,7 +14,7 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 
@@ -44,7 +44,7 @@ AccessTokenResponse = inline_serializer("AccessToken", fields={"access": seriali
 )
 @api_view(["POST"])
 @permission_classes([AllowAny])
-@throttle_classes([AnonRateThrottle])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
 def token_obtain(request):
     """POST /auth/token/ — email + password -> {access, refresh}."""
     return _run(TokenObtainPairSerializer, request)
@@ -57,7 +57,7 @@ def token_obtain(request):
 )
 @api_view(["POST"])
 @permission_classes([AllowAny])
-@throttle_classes([AnonRateThrottle])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
 def token_refresh(request):
     """POST /auth/token/refresh/ — refresh -> {access}."""
     return _run(TokenRefreshSerializer, request)
