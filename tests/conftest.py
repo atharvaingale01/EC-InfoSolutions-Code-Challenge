@@ -47,7 +47,7 @@ class FakeSpotifyClient:
             name = query[len('artist:"') :].rstrip('"')
             items = self.artist_top_tracks(f"artist-{name.lower().replace(' ', '-')}")
         else:
-            term = query.replace('genre:"', "").rstrip('"')
+            term = query.split(" year:")[0].replace('genre:"', "").rstrip('"')
             items = [
                 make_track(f"{term}-{i}", f"{term.title()} Song {i}", f"{term.title()} Artist {i}")
                 for i in range(3)

@@ -6,7 +6,7 @@ from apps.recommendations.spotify import get_client
 from apps.recommendations.spotify.client import SpotifyClient
 from apps.recommendations.spotify.mock import MockSpotifyClient
 from apps.recommendations.spotify.mock_data import ARTIST_TOP_TRACKS, TRACKS_BY_GENRE
-from apps.recommendations.spotify.moods import MOOD_MAP
+from apps.recommendations.spotify.moods import MOOD_MAP, MOOD_MAP_BY_MARKET, mood_terms
 
 
 def test_factory_respects_setting(settings):
@@ -17,9 +17,31 @@ def test_factory_respects_setting(settings):
 
 
 def test_every_mood_term_has_fixture_tracks():
-    for mood, terms in MOOD_MAP.items():
-        for term in terms:
-            assert TRACKS_BY_GENRE.get(term), f"mood {mood!r} term {term!r} has no fixture tracks"
+    for mapping in [MOOD_MAP, *MOOD_MAP_BY_MARKET.values()]:
+        for mood, terms in mapping.items():
+            for term in terms:
+                assert TRACKS_BY_GENRE.get(term), f"mood {mood!r} term {term!r} has no fixture"
+
+
+def test_mood_terms_follow_the_market():
+    assert mood_terms("romantic", "IN") == ["bollywood", "filmi"]
+    assert mood_terms("romantic", "in") == ["bollywood", "filmi"]
+    assert mood_terms("romantic", "US") == MOOD_MAP["romantic"]
+    assert mood_terms("romantic", None) == MOOD_MAP["romantic"]
+    assert mood_terms("nope", "IN") == []
+
+
+def test_indian_demo_profiles_resolve_in_mock_mode(db, settings):
+    from apps.core.seed_data import DEMO_USERS
+
+    settings.SPOTIFY_MOCK = True
+    settings.SPOTIFY_MARKET = "IN"
+    client = MockSpotifyClient()
+    for spec in DEMO_USERS:
+        for artist in spec["favorite_artists"]:
+            assert client.artist_tracks(artist), f"{artist} missing from Indian fixture"
+        for genre in spec["favorite_genres"]:
+            assert client.search_tracks(f'genre:"{genre}"'), f"{genre} missing from fixture"
 
 
 @pytest.mark.django_db

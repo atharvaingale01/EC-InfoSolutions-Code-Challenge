@@ -63,7 +63,7 @@ def test_collect_candidates_uses_all_seed_types(fake_spotify, user):
     queries = [c[1] for c in fake_spotify.calls if c[0] == "search_tracks"]
     assert 'genre:"rock"' in queries and 'genre:"indie"' in queries
     for term in MOOD_MAP["chill"]:
-        assert f'genre:"{term}"' in queries
+        assert any(q.startswith(f'genre:"{term}" year:') for q in queries)  # recent releases only
     assert ("search_artist", "Radiohead") in fake_spotify.calls
     assert 'artist:"Radiohead"' in queries  # top-tracks endpoint is 403 for new apps
 
@@ -148,6 +148,18 @@ def test_favourite_artist_gets_a_higher_per_artist_cap():
     assert sum(1 for t in ranked if t["artists"] == ["Other"]) == engine.MAX_PER_ARTIST
 
 
+def test_named_artist_tracks_lead_even_against_multi_hit_genre_tracks():
+    triple = engine.normalise_track(
+        make_track("t", "Old Hit", "Catalogue", 0), "genre:punjabi", 0, "q1"
+    )
+    triple2 = dict(triple, seed="genre:bhangra", query="q2")
+    triple3 = dict(triple, seed="mood:party", query="q3")
+    fav = engine.normalise_track(make_track("f", "New Hit", "Diljit", 0), "artist:Diljit", 9, "q4")
+    ranked = engine.rank([triple, triple2, triple3, fav], limit=10)
+    assert [t["spotify_id"] for t in ranked] == ["f", "t"]
+    assert ranked[1]["score"] > ranked[0]["score"]  # tier wins over raw score
+
+
 def test_user_seeds_outrank_similar_and_fallback_regardless_of_score():
     strong_fallback = engine.normalise_track(
         make_track("fb", "FB", "A", 100), "fallback:pop", 0, 'genre:"pop"'
@@ -196,3 +208,15 @@ def test_song_key_normalisation():
     assert engine.song_key({"name": "Creep", "artists": ["Radiohead"]}) != engine.song_key(
         {"name": "Creep", "artists": ["TLC"]}
     )
+
+
+def test_favourite_artist_outranks_a_track_found_by_two_genre_searches():
+    """Without popularity data, genre+mood double hits are often old catalogue; the
+    user's named artist must still come first."""
+    double = engine.normalise_track(
+        make_track("d", "Old Hit", "Catalogue", 0), "genre:punjabi", 0, "q1"
+    )
+    double2 = dict(double, seed="mood:party", query="q2")
+    fav = engine.normalise_track(make_track("f", "New Hit", "Diljit", 0), "artist:Diljit", 3, "q3")
+    ranked = engine.rank([double, double2, fav], limit=10)
+    assert [t["spotify_id"] for t in ranked] == ["f", "d"]
