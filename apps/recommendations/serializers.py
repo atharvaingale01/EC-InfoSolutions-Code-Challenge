@@ -20,6 +20,7 @@ class RecommendationListSerializer(serializers.Serializer):
     generated_at = serializers.DateTimeField(allow_null=True)
     source = serializers.CharField()
     cached = serializers.BooleanField()
+    refresh_pending = serializers.BooleanField()
     count = serializers.IntegerField()
     tracks = TrackSerializer(many=True)
 

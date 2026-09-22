@@ -84,9 +84,13 @@ def recommendation_list(request, user_id):
     get_object_or_404(User, pk=user_id)
     limit = _parse_limit(request.query_params.get("limit"))
 
+    refresh_pending = Recommendation.objects.filter(
+        user_id=user_id, status=Recommendation.Status.PENDING
+    ).exists()
+
     cached = cache.get(recs_cache_key(user_id))
     if cached:
-        return Response(_shape(user_id, cached, limit, cached=True))
+        return Response(_shape(user_id, cached, limit, cached=True, pending=refresh_pending))
 
     latest_ready = (
         Recommendation.objects.filter(user_id=user_id, status=Recommendation.Status.READY)
@@ -96,7 +100,7 @@ def recommendation_list(request, user_id):
     if latest_ready:
         payload = cache_payload(latest_ready)
         cache.set(recs_cache_key(user_id), payload, settings.RECS_CACHE_TTL_SECONDS)
-        return Response(_shape(user_id, payload, limit, cached=False))
+        return Response(_shape(user_id, payload, limit, cached=False, pending=refresh_pending))
 
     pending = (
         Recommendation.objects.filter(user_id=user_id, status=Recommendation.Status.PENDING)
@@ -130,7 +134,8 @@ def _parse_limit(raw) -> int:
     return max(1, min(limit, settings.RECS_MAX_LIMIT))
 
 
-def _shape(user_id, payload: dict, limit: int, cached: bool) -> dict:
+def _shape(user_id, payload: dict, limit: int, cached: bool, pending: bool = False) -> dict:
+    """`refresh_pending` tells clients a newer list is being built (stale-while-revalidate)."""
     tracks = payload.get("tracks", [])[:limit]
     return {
         "user_id": user_id,
@@ -138,6 +143,7 @@ def _shape(user_id, payload: dict, limit: int, cached: bool) -> dict:
         "generated_at": payload.get("generated_at"),
         "source": payload.get("source", "search_v1"),
         "cached": cached,
+        "refresh_pending": pending,
         "count": len(tracks),
         "tracks": tracks,
     }
