@@ -37,20 +37,32 @@ class FakeSpotifyClient:
         self.top_tracks: dict[str, list[dict]] = {}
         self.raise_on_search: Exception | None = None
 
-    def search_tracks(self, query, limit=10):
+    def search_tracks(self, query, limit=10, offset=0):
         self.calls.append(("search_tracks", query, limit))
         if self.raise_on_search:
             raise self.raise_on_search
         if query in self.search_results:
-            return self.search_results[query][:limit]
-        if query.startswith('artist:"'):
+            items = self.search_results[query]
+        elif query.startswith('artist:"'):
             name = query[len('artist:"') :].rstrip('"')
-            return self.artist_top_tracks(f"artist-{name.lower().replace(' ', '-')}")[:limit]
-        term = query.replace('genre:"', "").rstrip('"')
-        return [
-            make_track(f"{term}-{i}", f"{term.title()} Song {i}", f"{term.title()} Artist {i}")
-            for i in range(3)
-        ]
+            items = self.artist_top_tracks(f"artist-{name.lower().replace(' ', '-')}")
+        else:
+            term = query.replace('genre:"', "").rstrip('"')
+            items = [
+                make_track(f"{term}-{i}", f"{term.title()} Song {i}", f"{term.title()} Artist {i}")
+                for i in range(3)
+            ]
+        return items[offset : offset + limit]
+
+    def search_tracks_paged(self, query, wanted):
+        items, offset = [], 0
+        while len(items) < wanted:
+            page = self.search_tracks(query, limit=10, offset=offset)
+            items.extend(page)
+            if len(page) < 10:
+                break
+            offset += 10
+        return items[:wanted]
 
     def search_artist(self, name):
         self.calls.append(("search_artist", name))
@@ -59,7 +71,7 @@ class FakeSpotifyClient:
         return {"id": f"artist-{name.lower().replace(' ', '-')}", "name": name}
 
     def artist_tracks(self, artist_name, limit=10):
-        return self.search_tracks(f'artist:"{artist_name}"', limit=limit)
+        return self.search_tracks_paged(f'artist:"{artist_name}"', wanted=limit)
 
     def artist_top_tracks(self, artist_id):
         self.calls.append(("artist_top_tracks", artist_id))

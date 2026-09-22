@@ -114,3 +114,59 @@ def test_missing_popularity_uses_search_position():
     assert [t["spotify_id"] for t in ranked] == ["p0", "p1", "p2"]
     assert ranked[0]["score"] > ranked[1]["score"] > ranked[2]["score"]
     assert "position" not in ranked[0]
+
+
+@pytest.mark.django_db
+def test_thin_pool_expands_with_similar_artists_then_pads(fake_spotify):
+    """One genre yields 3 tracks -> similar-artist expansion -> pop padding, in that order."""
+    user = User.objects.create_user(
+        email="thin@example.com", password="Password123!", name="T", favorite_genres=["jazz"]
+    )
+    # fake: jazz search -> 3 tracks; 3 similar artists x 3 tracks; pop fallback -> 3 tracks
+    tracks, params = engine.build_recommendations(user, client=fake_spotify, limit=15)
+    assert params["similar_artists"]  # artists surfaced by the jazz search were expanded
+    kinds = [t["seed"].split(":")[0] for t in tracks]
+    assert kinds[0] == "genre"
+    assert "similar" in kinds and kinds.index("similar") > kinds.index("genre")
+    assert params["used_fallback"] is True and kinds[-1] == "fallback"
+    assert 10 <= len(tracks) <= 15
+
+
+def test_favourite_artist_gets_a_higher_per_artist_cap():
+    fav = [
+        engine.normalise_track(
+            make_track(f"f{i}", f"F{i}", "Fav", 50), "artist:Fav", i, 'artist:"Fav"'
+        )
+        for i in range(8)
+    ]
+    other = [
+        engine.normalise_track(make_track(f"o{i}", f"O{i}", "Other", 50), "genre:x", i, 'genre:"x"')
+        for i in range(8)
+    ]
+    ranked = engine.rank(fav + other, limit=20)
+    assert sum(1 for t in ranked if t["artists"] == ["Fav"]) == engine.MAX_PER_FAVOURITE_ARTIST
+    assert sum(1 for t in ranked if t["artists"] == ["Other"]) == engine.MAX_PER_ARTIST
+
+
+def test_user_seeds_outrank_similar_and_fallback_regardless_of_score():
+    strong_fallback = engine.normalise_track(
+        make_track("fb", "FB", "A", 100), "fallback:pop", 0, 'genre:"pop"'
+    )
+    similar = engine.normalise_track(make_track("sm", "SM", "B", 100), "similar:B", 0, 'artist:"B"')
+    weak_user = engine.normalise_track(
+        make_track("us", "US", "C", 0), "genre:jazz", 9, 'genre:"jazz"'
+    )
+    ranked = engine.rank([strong_fallback, similar, weak_user], limit=10)
+    assert [t["spotify_id"] for t in ranked] == ["us", "sm", "fb"]
+
+
+@pytest.mark.django_db
+def test_genre_search_pages_past_spotify_cap(fake_spotify, user):
+    fake_spotify.search_results['genre:"rock"'] = [
+        make_track(f"r{i}", f"R{i}", f"Artist{i}") for i in range(25)
+    ]
+    engine.build_recommendations(user, client=fake_spotify)
+    rock_calls = [
+        c for c in fake_spotify.calls if c[0] == "search_tracks" and c[1] == 'genre:"rock"'
+    ]
+    assert len(rock_calls) == 2  # GENRE_SEARCH_LIMIT=20 -> two pages of 10

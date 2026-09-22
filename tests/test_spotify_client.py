@@ -168,3 +168,15 @@ def test_search_limit_is_clamped_to_spotify_maximum():
     responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
     SpotifyClient().search_tracks("q", limit=50)
     assert "limit=10" in responses.calls[-1].request.url
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_paged_search_uses_offset_and_stops_on_short_page():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(10), status=200)
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(4), status=200)
+    items = SpotifyClient().search_tracks_paged("q", wanted=30)
+    assert len(items) == 14
+    gets = [c.request.url for c in responses.calls if c.request.method == "GET"]
+    assert len(gets) == 2 and "offset=10" in gets[1] and "offset" not in gets[0]
