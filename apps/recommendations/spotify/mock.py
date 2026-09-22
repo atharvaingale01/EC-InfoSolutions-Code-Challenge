@@ -9,6 +9,7 @@ Redis, analytics) can be exercised end-to-end without credentials or network.
 """
 
 import logging
+import re
 
 from django.conf import settings
 
@@ -72,7 +73,8 @@ class MockSpotifyClient:
             name = query[len('artist:"') :].rstrip('"').strip().lower()
             items = next((t for k, t in ARTIST_TOP_TRACKS.items() if k.lower() == name), [])
             return {"tracks": {"items": items[offset : offset + limit]}}
-        term = query.replace('genre:"', "").rstrip('"').strip().lower()
+        term = re.sub(r"\s+year:\S+$", "", query)  # mood searches carry a year window
+        term = term.replace('genre:"', "").rstrip('"').strip().lower()
         items = TRACKS_BY_GENRE.get(term)
         if items is None:
             # Free-text search: match on track or artist name.

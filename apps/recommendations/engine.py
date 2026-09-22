@@ -15,12 +15,13 @@ list (Spotify's relevance order) feeds the score as well.
 import logging
 import re
 from collections import defaultdict
+from datetime import date
 
 from django.conf import settings
 
 from .spotify import get_client
 from .spotify.exceptions import SpotifyForbidden, SpotifyNotFound
-from .spotify.moods import MOOD_MAP
+from .spotify.moods import mood_terms
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,11 @@ MAX_PER_FAVOURITE_ARTIST = 5  # the user asked for these; let more through
 FALLBACK_GENRE = "pop"
 
 SEED_HIT_WEIGHT = 10.0
-ARTIST_SEED_BONUS = 5.0
+ARTIST_SEED_BONUS = 5.0  # ordering is by tier first (see rank()); this only orders within a tier
 POSITION_WEIGHT = 0.3  # per rank step from the top of a search result list
 RELEVANCE_SPAN = 10  # positions beyond this add nothing
+# Moods describe the present, so their searches are limited to recent releases.
+MOOD_RECENT_YEARS = 15
 
 
 _TITLE_NOISE = re.compile(
@@ -120,9 +123,10 @@ def collect_candidates(user, client, limit: int | None = None) -> tuple[list[dic
             if track := normalise_track(item, f"artist:{artist_name}", position, query):
                 candidates.append(track)
 
+    year_window = f"year:{date.today().year - MOOD_RECENT_YEARS}-{date.today().year}"
     for mood in moods:
-        for term in MOOD_MAP.get(mood, []):
-            search(f'genre:"{term}"', MOOD_SEARCH_LIMIT, f"mood:{mood}")
+        for term in mood_terms(mood, client.market):
+            search(f'genre:"{term}" {year_window}', MOOD_SEARCH_LIMIT, f"mood:{mood}")
 
     # Discovery expansion: when the pool is thin (few seeds, or Spotify's 10-per-search
     # cap), pull tracks from the artists that surfaced most often but were not asked for.
@@ -191,14 +195,18 @@ def rank(candidates: list[dict], limit: int) -> list[dict]:
         if tid not in merged:
             merged[tid] = dict(track)
 
-    # Seeds that carry no user intent rank below everything the user asked for.
+    # Ordinal tiers, then score within a tier. A named artist is the clearest
+    # intent, so their tracks lead regardless of how many overlapping genre and
+    # mood searches an unrelated catalogue track happened to match.
     def priority(tid):
         labels = seed_labels[tid]
-        if any(s.startswith(("genre:", "artist:", "mood:")) for s in labels):
+        if tid in artist_seeded:
             return 0
-        if any(s.startswith("similar:") for s in labels):
+        if any(s.startswith(("genre:", "mood:")) for s in labels):
             return 1
-        return 2  # fallback
+        if any(s.startswith("similar:") for s in labels):
+            return 2
+        return 3  # fallback
 
     for tid, track in merged.items():
         hits = len(query_hits[tid])
