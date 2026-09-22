@@ -507,6 +507,12 @@ pip install -r requirements.txt
 POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest
 ```
 
+The OpenAPI schema is validated as part of the same workflow. It fails if any endpoint lacks a declared response or two component names collide:
+
+```bash
+python manage.py spectacular --validate --fail-on-warn --file /dev/null
+```
+
 The suite (76 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
 
 ---
