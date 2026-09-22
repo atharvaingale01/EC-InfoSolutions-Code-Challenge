@@ -58,9 +58,9 @@ docker compose exec web python manage.py seed_demo
 | `make logs` | Tail all service logs |
 | `make seed` | Create demo data (idempotent) |
 | `make test` | Run the test suite inside the web container |
-| `make lint` | Ruff lint and format check |
+| `make lint` | Ruff lint, format check and OpenAPI schema validation |
 | `make superuser` | Create an admin for `/admin/` |
-| `make dev` / `make dev-down` | Development stack: runserver with autoreload, bind-mounted code, no nginx, Django on :8000 |
+| `make dev` / `make dev-down` | Development stack: runserver with autoreload, bind-mounted code, no nginx, Django on :8000. Other targets work against it with `DEV=1 make seed` etc. |
 | `make clean` | Stop and delete volumes (destroys data) |
 
 **Environment variables** are documented inline in `.env.example`. The ones you are most likely to change:
@@ -75,6 +75,7 @@ docker compose exec web python manage.py seed_demo
 | `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST` | Per-IP edge rate limit (nginx) |
 | `NGINX_PORT` | Host port for the API (default 80) |
 | `DJANGO_SECRET_KEY` | Required for the production settings; the placeholder is rejected |
+| `CORS_ALLOW_ALL_ORIGINS`, `CORS_ALLOWED_ORIGINS` | Browser origins allowed to call the API |
 
 **Running tests locally** (outside Docker) needs a reachable Postgres:
 
@@ -92,7 +93,7 @@ Base URL: `http://localhost`. All bodies and responses are JSON. Errors return `
 
 ### Authentication
 
-Every route except registration, token and health requires credentials. Two schemes are accepted:
+Every route except registration, the token routes, health and the API docs requires credentials. Two schemes are accepted:
 
 - **JWT** (recommended): obtain a token, send `Authorization: Bearer <access>`.
 - **HTTP Basic**: `curl -u email:password ...`.
@@ -115,7 +116,7 @@ curl http://localhost/users/<user_id>/ -H 'Authorization: Bearer <access>'
 
 Access tokens last 60 minutes. Refresh with `POST /auth/token/refresh/` and `{"refresh": "..."}`.
 
-Demo accounts from `make seed`, all with password `Password123!`: `alice@example.com`, `bob@example.com`, `carol@example.com`, `dave@example.com`, `eve@example.com`, and staff `admin@example.com`.
+Demo accounts from `make seed`, all with password `Password123!`: `alice@example.com`, `bob@example.com`, `carol@example.com`, `dave@example.com`, `eve@example.com`, and `admin@example.com` (staff flag only, no admin model permissions). These credentials are public by design; run `seed_demo --flush` before exposing the stack beyond your machine.
 
 **Who can call what**
 
@@ -133,7 +134,7 @@ Demo accounts from `make seed`, all with password `Password123!`: `alice@example
 
 **`POST /users/`** — create or update a profile
 
-Anonymous: registers, requires `email` and `password`. Authenticated: partial update of the caller's own profile; `email` and `password` are ignored. Either way a recommendation rebuild is queued.
+Anonymous: registers, requires `email`, `password` and `name`. Authenticated: partial update of the caller's own profile; `email` and `password` are ignored. A recommendation rebuild is queued whenever genres, artists or moods change (at most one per minute per user; changes arriving during a build are applied by a follow-up build).
 
 ```json
 { "email": "me@example.com", "password": "Password123!", "name": "Me",
@@ -165,8 +166,8 @@ Returns `202` immediately. Limited to 5 per minute per user. A pending build fro
   "user_id": "…", "recommendation_id": "…", "generated_at": "2026-09-21T10:00:00Z",
   "source": "search_v1", "cached": true, "refresh_pending": false, "count": 20,
   "tracks": [
-    { "spotify_id": "70LcF31zb1H0PyJoS1Sx1r", "name": "Creep", "artists": ["Radiohead"],
-      "album": "Pablo Honey", "external_url": "https://open.spotify.com/track/70LcF31zb1H0PyJoS1Sx1r",
+    { "spotify_id": "6b2oQwSGFkzsMtQruIWm2p", "name": "Creep", "artists": ["Radiohead"],
+      "album": "Pablo Honey", "external_url": "https://open.spotify.com/track/6b2oQwSGFkzsMtQruIWm2p",
       "seed": "artist:Radiohead, genre:rock", "score": 28.0,
       "popularity": 0, "preview_url": null, "duration_ms": 238640 }
   ]
@@ -176,7 +177,7 @@ Returns `202` immediately. Limited to 5 per minute per user. A pending build fro
 - `cached` is `true` when served from Redis, otherwise from the latest build in PostgreSQL.
 - `refresh_pending` is `true` while a newer list is being built; the previous list is served meanwhile.
 - `seed` explains why each track is there: `genre:`, `artist:`, `mood:`, `similar:` (discovered artist), or `fallback:pop`.
-- `202 {"status": "pending"}` when a build is running and no earlier list exists. `404` if nothing was ever generated, including the last failure reason if a build failed.
+- `202 {"status": "pending", "recommendation_id": "…"}` when a build is running and no earlier list exists. `404` if nothing was ever generated, including a short reason if the last build failed.
 - `limit` defaults to 20, maximum 50.
 
 **`POST /activity/`** — record play, like or skip
@@ -184,7 +185,7 @@ Returns `202` immediately. Limited to 5 per minute per user. A pending build fro
 The acting user is always the authenticated user.
 
 ```json
-{ "track_id": "70LcF31zb1H0PyJoS1Sx1r", "track_name": "Creep", "artist_name": "Radiohead", "action": "like" }
+{ "track_id": "6b2oQwSGFkzsMtQruIWm2p", "track_name": "Creep", "artist_name": "Radiohead", "action": "like" }
 ```
 
 Returns `201` with `id`, `user_id` and `created_at`. Limited to 60 per minute per user.
@@ -236,7 +237,7 @@ Genres come from user preferences; artists and tracks from activity inside the w
 
 ### Rate limits
 
-Per user, backed by Redis: 120 requests/min overall, 5/min for refresh triggers, 60/min for activity writes, 20/min for anonymous calls. Throttled responses return `429` with `Retry-After`. nginx adds a coarse 30 requests/second per IP with a burst of 50 in front. All five limits are set in `.env` (`THROTTLE_*`, `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST`).
+Per user, backed by Redis: 5/min for refresh triggers, 60/min for activity writes, 120/min for every other authenticated call, 20/min for anonymous calls. Throttled responses return `429` with `Retry-After`. nginx adds a coarse 30 requests/second per IP with a burst of 50 in front, plus 1 request/second on the admin login form. Behind nginx the client address is taken from a header nginx sets itself, so it cannot be spoofed. All five limits are set in `.env` (`THROTTLE_*`, `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST`).
 
 ### Postman
 
@@ -264,8 +265,10 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 - nginx serves plain HTTP, which is fine locally. Basic auth over HTTP sends credentials in the clear; TLS is required before real deployment.
 - Analytics are computed on read with ORM aggregates. Fine at this scale; a rollup table would be needed under real load.
 - After a profile change the previous list is served with `refresh_pending: true` until the rebuild finishes.
-- Redis runs without persistence. A Redis restart drops the cache (rebuilt on demand) and any queued tasks (re-queued by the next scheduled refresh).
-- A build that never completes, for example because the broker lost the task, leaves a `pending` row. The scheduled refresh marks rows older than 15 minutes as failed and `refresh_pending` ignores rows older than 10 minutes, so the flag cannot stick.
+- Redis runs without persistence. A Redis restart drops the cache (rebuilt on demand) and any queued tasks (re-queued by the next scheduled refresh). If Redis is down, reads fall back to PostgreSQL instead of failing.
+- A build is considered lost if it never started within one refresh interval or has been running for more than 15 minutes; the scheduled refresh marks such rows failed, and `refresh_pending` ignores them. The same job prunes failed rows after 7 days and keeps the last 5 ready builds per user.
+- If two builds for one user overlap, the one requested last owns the result, even if the older one finishes later.
+- Registration reveals whether an email is already taken. Standard trade-off for a small API; throttled per client.
 - Production settings refuse to start with the placeholder `DJANGO_SECRET_KEY`. Generate one as described in `.env.example`, or set `DJANGO_ALLOW_INSECURE_SECRET=1` for a throwaway local run.
 - Single Postgres and single Redis, no high availability.
 
@@ -279,10 +282,10 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 | **`seed_demo` command** (`make seed`) | 5 users with distinct tastes, a staff user and 50 activity rows, so every endpoint returns data immediately. Idempotent; `--flush` recreates, `--no-refresh` skips Spotify |
 | **Mock Spotify mode** (`SPOTIFY_MOCK=1`) | Fixture of real track data served through the same client interface and cache. Labelled `source: mock_v1` so it cannot be mistaken for live output |
 | **Development compose override** (`make dev`) | runserver with autoreload, code bind-mounted, DB and Redis published, no nginx |
-| **Swagger UI and OpenAPI schema** | Generated from the views; validated in CI with `manage.py spectacular --validate --fail-on-warn` |
+| **Swagger UI and OpenAPI schema** | Generated from the views; `make lint` validates it with `spectacular --validate --fail-on-warn` |
 | **Health endpoint** | Database and cache check, used by the compose healthcheck |
 | **Function-based views throughout** | Every endpoint is an `@api_view` function; classes are used for models, serializers, permissions, throttles and clients |
 | **Persistent Spotify cache table** | Every Spotify response stored in PostgreSQL with an expiry, on top of the Redis layer, so rebuilds for overlapping tastes cost few upstream calls |
 | **Celery Beat cache purge** | Daily cleanup of expired Spotify cache rows |
-| **83 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
+| **109 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
 | **Makefile and Postman collection** | One-command setup; collection with login script and both auth styles |
