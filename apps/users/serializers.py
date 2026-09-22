@@ -1,4 +1,5 @@
 from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.recommendations.spotify.moods import MOOD_MAP
@@ -19,12 +20,15 @@ class _PreferenceListField(serializers.ListField):
 
     def to_internal_value(self, data):
         values = super().to_internal_value(data)
-        cleaned = []
+        cleaned: list[str] = []
+        seen: set[str] = set()
         for value in values:
             value = value.strip()
             if self.lowercase:
                 value = value.lower()
-            if value and value not in cleaned:
+            key = value.casefold()  # "Drake" and "drake" are the same artist
+            if value and key not in seen:
+                seen.add(key)
                 cleaned.append(value)
         return cleaned
 
@@ -83,9 +87,15 @@ class RegisterSerializer(ProfileSerializer):
             raise serializers.ValidationError("A user with this email already exists.")
         return value
 
-    def validate_password(self, value):
-        validate_password(value)
-        return value
+    def validate(self, attrs):
+        # Run Django's validators with the would-be user so the similarity
+        # check can compare against email and name.
+        candidate = User(email=attrs.get("email", ""), name=attrs.get("name", ""))
+        try:
+            validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"password": list(exc.messages)}) from exc
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop("password")
