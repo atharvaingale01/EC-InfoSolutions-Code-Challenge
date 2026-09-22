@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 TOKEN_CACHE_KEY = "spotify:token"
 MAX_ATTEMPTS = 3
 SEARCH_MAX_LIMIT = 10  # Spotify reduced the search limit ceiling from 50 to 10 in Feb 2026
+MAX_INLINE_RATE_LIMIT_WAIT = 5  # seconds we are willing to sleep inside a request
+
+
+def _retry_after_seconds(raw: str | None) -> int:
+    try:
+        return max(1, int(float(raw))) if raw else 1
+    except (TypeError, ValueError):
+        return 1
 
 
 class SpotifyClient:
@@ -60,12 +68,15 @@ class SpotifyClient:
         if not self.client_id or not self.client_secret:
             raise SpotifyAuthError("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET are not configured.")
 
-        resp = self.session.post(
-            settings.SPOTIFY_TOKEN_URL,
-            data={"grant_type": "client_credentials"},
-            auth=(self.client_id, self.client_secret),
-            timeout=10,
-        )
+        try:
+            resp = self.session.post(
+                settings.SPOTIFY_TOKEN_URL,
+                data={"grant_type": "client_credentials"},
+                auth=(self.client_id, self.client_secret),
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise SpotifyUnavailable(f"Spotify token endpoint unreachable: {exc}") from exc
         if resp.status_code in (400, 401):
             raise SpotifyAuthError(f"Spotify rejected client credentials: {resp.text[:200]}")
         if resp.status_code >= 500:
@@ -82,13 +93,24 @@ class SpotifyClient:
     def _get(self, path: str, params: dict) -> dict:
         url = f"{self.base_url}{path}"
         token = self.get_token()
+        refreshed = False
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            resp = self.session.get(
-                url, params=params, headers={"Authorization": f"Bearer {token}"}, timeout=10
-            )
+            try:
+                resp = self.session.get(
+                    url, params=params, headers={"Authorization": f"Bearer {token}"}, timeout=10
+                )
+            except requests.RequestException as exc:
+                # Timeouts / connection resets: back off in-process, then let Celery retry.
+                if attempt == MAX_ATTEMPTS:
+                    raise SpotifyUnavailable(f"{path}: {type(exc).__name__}: {exc}") from exc
+                time.sleep(0.5 * 2 ** (attempt - 1))
+                continue
             if resp.status_code == 200:
                 return resp.json()
-            if resp.status_code == 401 and attempt == 1:
+            if resp.status_code == 401:
+                if refreshed:
+                    raise SpotifyAuthError("Spotify rejected a freshly issued access token.")
+                refreshed = True
                 token = self.get_token(force=True)
                 continue
             if resp.status_code == 403:
@@ -103,8 +125,10 @@ class SpotifyClient:
             if resp.status_code == 404:
                 raise SpotifyNotFound(f"{path} returned 404")
             if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", "1"))
-                if attempt == MAX_ATTEMPTS or retry_after > 30:
+                retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
+                # Short waits are absorbed here; anything longer is handed to Celery,
+                # which retries with that countdown instead of blocking a worker slot.
+                if attempt == MAX_ATTEMPTS or retry_after > MAX_INLINE_RATE_LIMIT_WAIT:
                     raise SpotifyRateLimited(retry_after)
                 logger.warning("Spotify 429 on %s; sleeping %ss", path, retry_after)
                 time.sleep(retry_after)
