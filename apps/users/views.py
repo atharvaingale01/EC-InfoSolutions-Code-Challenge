@@ -1,6 +1,7 @@
+from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiResponse, extend_schema
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -34,17 +35,30 @@ def user_create_or_update(request):
     Either path invalidates cached recommendations and queues a rebuild.
     """
     if request.user.is_authenticated:
+        before = _preferences(request.user)
         serializer = ProfileSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        on_preferences_changed(user)
+        # Only a real preference change earns a Spotify rebuild; otherwise a
+        # no-op POST would sidestep the refresh throttle.
+        if _preferences(user) != before:
+            on_preferences_changed(user)
         return Response(ProfileSerializer(user).data, status=status.HTTP_200_OK)
 
     serializer = RegisterSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    user = serializer.save()
+    try:
+        user = serializer.save()
+    except IntegrityError:  # lost a race with a concurrent registration
+        raise serializers.ValidationError(
+            {"email": ["A user with this email already exists."]}
+        ) from None
     on_preferences_changed(user)
     return Response(ProfileSerializer(user).data, status=status.HTTP_201_CREATED)
+
+
+def _preferences(user) -> tuple:
+    return (list(user.favorite_genres), list(user.favorite_artists), list(user.moods))
 
 
 @extend_schema(responses=ProfileSerializer, summary="Retrieve a user's profile and preferences")

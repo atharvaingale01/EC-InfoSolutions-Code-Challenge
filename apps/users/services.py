@@ -1,10 +1,13 @@
 """Side effects that run when a user's preferences change."""
 
 import logging
+from datetime import timedelta
 
 from django.core.cache import cache
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+PENDING_REUSE_WINDOW = timedelta(minutes=2)
 
 
 def on_preferences_changed(user) -> None:
@@ -14,6 +17,12 @@ def on_preferences_changed(user) -> None:
     from apps.recommendations.tasks import recs_cache_key, refresh_user_recommendations
 
     cache.delete(recs_cache_key(user.pk))
+    if Recommendation.objects.filter(
+        user=user,
+        status=Recommendation.Status.PENDING,
+        created_at__gte=timezone.now() - PENDING_REUSE_WINDOW,
+    ).exists():
+        return  # a rebuild is already queued; it will pick up the new preferences
     rec = Recommendation.objects.create(user=user)  # visible as "pending" straight away
     try:
         result = refresh_user_recommendations.delay(str(user.pk), str(rec.pk))
