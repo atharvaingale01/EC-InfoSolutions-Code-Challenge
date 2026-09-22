@@ -1,53 +1,32 @@
 # Music Discovery Backend
 
-A Django REST backend that recommends songs to users based on their stated genres, artists and moods, using the Spotify Web API. Recommendations are built asynchronously with Celery, cached in Redis, persisted in PostgreSQL, and served behind nginx.
+Django REST backend that recommends songs to users from their favourite genres, artists and moods, using the Spotify Web API as the catalogue. Recommendations are built asynchronously by Celery, cached in Redis, persisted in PostgreSQL, and served behind nginx.
 
-| Layer | Choice |
-|-------|--------|
-| API | Django 5.2, Django REST Framework, drf-spectacular (Swagger) |
-| Auth | JWT (SimpleJWT) **and** HTTP Basic, per-user rate limiting |
-| Data | PostgreSQL 16 |
-| Cache / broker | Redis 7 |
-| Background jobs | Celery worker + Celery Beat |
-| Edge | nginx reverse proxy |
-| Packaging | Docker Compose, Makefile |
+Stack: Python 3.12, Django 5.2, Django REST Framework, PostgreSQL 16, Redis 7, Celery 5 with Beat, nginx, Docker Compose.
 
----
-
-## Contents
-
-- [Quick start](#quick-start)
-- [Architecture](#architecture)
-- [Authentication](#authentication)
-- [API reference](#api-reference)
-- [Background processing](#background-processing)
-- [Recommendation engine](#recommendation-engine)
-- [Caching](#caching)
-- [Rate limiting](#rate-limiting)
-- [Analytics definitions](#analytics-definitions)
-- [Testing](#testing)
-- [Project layout](#project-layout)
+- [Setup and run](#setup-and-run)
+- [API usage guide](#api-usage-guide)
 - [Assumptions and limitations](#assumptions-and-limitations)
+- [Extras beyond the brief](#extras-beyond-the-brief)
 
 ---
 
-## Quick start
+## Setup and run
 
-Prerequisites: Docker with Compose v2. For live Spotify data you also need a Spotify app (client id + secret) from <https://developer.spotify.com/dashboard> **owned by a Spotify Premium account**, which Spotify requires for all development-mode apps (see [Spotify access and mock mode](#spotify-access-and-mock-mode)). Without one, set `SPOTIFY_MOCK=1` and everything still runs.
+**Prerequisites:** Docker with Compose v2. For live Spotify data, a Spotify app (client id and secret) from <https://developer.spotify.com/dashboard> whose owner has a Spotify Premium subscription. Without one, set `SPOTIFY_MOCK=1` and the service runs on fixture data.
 
 ```bash
 git clone https://github.com/atharvaingale01/EC-InfoSolutions-Code-Challenge.git
 cd EC-InfoSolutions-Code-Challenge
 
 cp .env.example .env
-# edit .env → either set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET (Premium-owned app)
-#             or set SPOTIFY_MOCK=1 to run on fixture data with no credentials
+# edit .env: set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET, or set SPOTIFY_MOCK=1
 
-make up        # builds images, starts db, redis, web, worker, beat, nginx
-make seed      # 5 demo users + staff user + sample activity, queues recommendations
+make up      # builds images; starts db, redis, web, worker, beat, nginx
+make seed    # 5 demo users, a staff user, sample activity; queues recommendations
 ```
 
-The API is now on <http://localhost/> (nginx). Interactive docs: <http://localhost/api/docs/>.
+The API is on <http://localhost/>. Swagger UI is at <http://localhost/api/docs/>. If port 80 is taken, use `NGINX_PORT=8080 make up`.
 
 Without `make`:
 
@@ -56,130 +35,83 @@ docker compose up -d --build
 docker compose exec web python manage.py seed_demo
 ```
 
-Useful targets:
+**Services started**
+
+| Service | Role |
+|---------|------|
+| nginx | Only published port. Reverse proxy to Django, serves static files, edge rate limit |
+| web | Django under Gunicorn. Runs migrations on start |
+| worker | Celery worker that builds recommendations |
+| beat | Celery Beat. Refreshes all users every 6 hours, purges expired Spotify cache daily |
+| db | PostgreSQL 16 |
+| redis | Cache and Celery broker |
+
+**Useful commands**
 
 | Command | What it does |
 |---------|--------------|
-| `make up` / `make down` | Start / stop the production-style stack (nginx on :80) |
-| `make dev` / `make dev-down` | Start / stop the dev stack (autoreload, no nginx) |
+| `make up` / `make down` | Start / stop the stack |
 | `make logs` | Tail all service logs |
 | `make seed` | Create demo data (idempotent) |
-| `make test` | Run the pytest suite inside the web container |
+| `make test` | Run the test suite inside the web container |
 | `make lint` | Ruff lint and format check |
-| `make superuser` | Create an admin user for `/admin/` |
+| `make superuser` | Create an admin for `/admin/` |
+| `make dev` / `make dev-down` | Development stack: runserver with autoreload, bind-mounted code, no nginx, Django on :8000 |
 | `make clean` | Stop and delete volumes (destroys data) |
 
-Change the published port with `NGINX_PORT=8080 make up` if 80 is taken.
+**Environment variables** are documented inline in `.env.example`. The ones you are most likely to change:
 
-### Development stack
+| Variable | Purpose |
+|----------|---------|
+| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | Spotify app credentials |
+| `SPOTIFY_MOCK` | `1` to serve fixture tracks with no Spotify calls |
+| `RECS_REFRESH_INTERVAL_MINUTES` | Beat interval for refreshing all users (default 360) |
+| `RECS_CACHE_TTL_SECONDS` | Redis TTL for a user's recommendation list (default 3600) |
+| `THROTTLE_*` | Per-user rate limits |
+| `NGINX_PORT` | Host port for the API (default 80) |
 
-`docker-compose.dev.yml` is an override layered on the base file. It swaps gunicorn for Django's autoreloading `runserver`, bind-mounts the source tree so edits apply instantly, turns on `DEBUG` and the browsable API, publishes Postgres and Redis on the host, and skips nginx.
+**Running tests locally** (outside Docker) needs a reachable Postgres:
 
 ```bash
-make dev          # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-make dev-logs
-make dev-down
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest
 ```
-
-Dev API: <http://localhost:8000/>. Host ports are configurable with `DEV_WEB_PORT`, `DEV_DB_PORT`, `DEV_REDIS_PORT`. The dev stack uses its own project name and volumes, so it can run alongside the production-style stack.
-
-| | `docker-compose.yml` | `+ docker-compose.dev.yml` |
-|-|----------------------|----------------------------|
-| App server | gunicorn, 3 workers | runserver with autoreload |
-| Code | baked into the image | bind-mounted from the host |
-| Settings | `config.settings.prod` | `config.settings.dev`, `DEBUG=1` |
-| Entry point | nginx on :80 | Django on :8000, no nginx |
-| DB / Redis ports | internal only | published to the host |
-| Celery worker | concurrency 2, info logs | concurrency 1, debug logs |
-
-### Demo accounts
-
-`make seed` creates these users, all with password `Password123!`:
-
-| Email | Genres | Artists | Moods |
-|-------|--------|---------|-------|
-| alice@example.com | rock, indie | Radiohead, Arctic Monkeys | chill |
-| bob@example.com | hip-hop, r-n-b | Kendrick Lamar, Drake | energetic, party |
-| carol@example.com | pop, dance | Dua Lipa, The Weeknd | happy |
-| dave@example.com | classical, jazz | Miles Davis | focus |
-| eve@example.com | edm, electronic | Daft Punk, Fred again.. | workout |
-| admin@example.com | staff / superuser | | |
-
-### Postman
-
-Import `postman/collection.json` and `postman/environment.json`. Run **Auth → Login** first; it stores the tokens and your user id in the environment. Every other request inherits Bearer auth. The **Basic Auth** folder demonstrates the same endpoints with HTTP Basic.
 
 ---
 
-## Architecture
+## API usage guide
 
-```
- client ──► nginx :80 ──► gunicorn/django :8000 ──► PostgreSQL
-                │                 │
-                │ /static/        ├──► Redis (cache db1, broker db0, results db2)
-                ▼                 │            ▲            ▲
-          static volume           │            │            │
-                                  │      celery worker   celery beat
-                                  │            │
-                                  └────────────┴──► Spotify Web API
-```
+Base URL: `http://localhost`. All bodies and responses are JSON. Errors return `{"detail": "..."}`, with an `errors` object keyed by field on validation failures.
 
-**Code style.** Every endpoint is a Django REST Framework **function-based view** (`@api_view`) with permissions and throttles applied as decorators. Classes are used for models, serializers, permissions, throttles and the Spotify clients, never for views. The two JWT routes are function wrappers over SimpleJWT's serializers for the same reason.
+### Authentication
 
-**Recommendation flow**
+Every route except registration, token and health requires credentials. Two schemes are accepted:
 
-1. `POST /recommendations/{user_id}/refresh/` creates a `Recommendation` row with status `pending` and enqueues a Celery task. Responds `202` immediately.
-2. The worker resolves the user's preferences into Spotify queries, routes every call through a persistent `SpotifyCache` table, merges and ranks the results, marks the row `ready`, and writes the track list to Redis.
-3. `GET /recommendations/{user_id}/` reads Redis first, falls back to the newest `ready` row in PostgreSQL (re-warming Redis), returns `202` if only a `pending` row exists, or `404` if nothing was ever generated.
-
-Registering or updating a profile also queues a refresh, so new users get recommendations without an explicit trigger.
-
-**Data model**
-
-| Table | Purpose |
-|-------|---------|
-| `users_user` | Custom user: UUID id, email login, `favorite_genres`, `favorite_artists`, `moods` (JSON lists) |
-| `recommendations_recommendation` | One row per generation: status, normalised `tracks` JSON, `seed_params` snapshot, task id, error |
-| `recommendations_spotifycache` | Raw Spotify responses keyed by sha256(endpoint + params) with an expiry |
-| `activity_useractivity` | play / like / skip events with denormalised track and artist names |
-
----
-
-## Authentication
-
-Two schemes are accepted on every protected route. DRF tries them in order.
-
-**JWT (recommended)**
+- **JWT** (recommended): obtain a token, send `Authorization: Bearer <access>`.
+- **HTTP Basic**: `curl -u email:password ...`.
 
 ```bash
-# register (anonymous)
+# 1. register
 curl -X POST http://localhost/users/ -H 'Content-Type: application/json' -d '{
   "email": "me@example.com", "password": "Password123!", "name": "Me",
-  "favorite_genres": ["rock"], "favorite_artists": ["Radiohead"], "moods": ["chill"]
+  "favorite_genres": ["rock", "indie"], "favorite_artists": ["Radiohead"], "moods": ["chill"]
 }'
 
-# obtain tokens
+# 2. get tokens
 curl -X POST http://localhost/auth/token/ -H 'Content-Type: application/json' \
   -d '{"email": "me@example.com", "password": "Password123!"}'
-# → {"access": "...", "refresh": "..."}
+# {"access": "...", "refresh": "..."}
 
-# use
+# 3. call the API
 curl http://localhost/users/<user_id>/ -H 'Authorization: Bearer <access>'
-
-# refresh
-curl -X POST http://localhost/auth/token/refresh/ -H 'Content-Type: application/json' \
-  -d '{"refresh": "<refresh>"}'
 ```
 
-Access tokens last 60 minutes, refresh tokens 7 days (configurable via `JWT_ACCESS_MINUTES`, `JWT_REFRESH_DAYS`).
+Access tokens last 60 minutes. Refresh with `POST /auth/token/refresh/` and `{"refresh": "..."}`.
 
-**HTTP Basic**
+Demo accounts from `make seed`, all with password `Password123!`: `alice@example.com`, `bob@example.com`, `carol@example.com`, `dave@example.com`, `eve@example.com`, and staff `admin@example.com`.
 
-```bash
-curl -u me@example.com:Password123! http://localhost/users/<user_id>/
-```
-
-**Access rules**
+**Who can call what**
 
 | Route | Anonymous | Owner | Other user | Staff |
 |-------|-----------|-------|------------|-------|
@@ -191,375 +123,157 @@ curl -u me@example.com:Password123! http://localhost/users/<user_id>/
 | `GET /analytics/summary/`, `/trends/` | 401 | 200 | 200 | 200 |
 | `GET /analytics/user/{id}/` | 401 | 200 | 403 | 200 |
 
-The acting user for `POST /activity/` is always taken from the credentials, never from the request body.
+### Endpoints
 
----
+**`POST /users/`** — create or update a profile
 
-## API reference
-
-Full OpenAPI schema at `/api/schema/`, Swagger UI at `/api/docs/`. Errors use `{"detail": "..."}`; validation errors add an `errors` object keyed by field.
-
-### `POST /users/` — register or update
-
-Anonymous request registers. Authenticated request performs a partial update of the caller's own profile (email and password are ignored on update).
+Anonymous: registers, requires `email` and `password`. Authenticated: partial update of the caller's own profile; `email` and `password` are ignored. Either way a recommendation rebuild is queued.
 
 ```json
-{
-  "email": "me@example.com",
-  "password": "Password123!",
-  "name": "Me",
-  "favorite_genres": ["rock", "indie"],
-  "favorite_artists": ["Radiohead"],
-  "moods": ["chill"]
-}
+{ "email": "me@example.com", "password": "Password123!", "name": "Me",
+  "favorite_genres": ["rock", "indie"], "favorite_artists": ["Radiohead"], "moods": ["chill"] }
 ```
 
-- Genres are trimmed, lowercased and de-duplicated. Each list holds at most 10 items.
-- Moods must be from: `happy, sad, chill, energetic, focus, romantic, party, workout`.
-- Response `201` (created) or `200` (updated) with the profile.
+Genres are lowercased and de-duplicated. Each list holds at most 10 items. Moods must be one of `happy, sad, chill, energetic, focus, romantic, party, workout`.
 
-### `GET /users/{user_id}/`
+**`GET /users/{user_id}/`** — profile and saved preferences
 
 ```json
-{
-  "id": "6f1c…", "email": "me@example.com", "name": "Me",
+{ "id": "…", "email": "me@example.com", "name": "Me",
   "favorite_genres": ["rock", "indie"], "favorite_artists": ["Radiohead"], "moods": ["chill"],
-  "is_staff": false, "created_at": "…", "updated_at": "…"
-}
+  "is_staff": false, "created_at": "…", "updated_at": "…" }
 ```
 
-### `POST /recommendations/{user_id}/refresh/`
+**`POST /recommendations/{user_id}/refresh/`** — trigger an async rebuild
 
-Queues a background rebuild. Throttled to 5 per minute per user. If a `pending` build from the last 2 minutes exists, it is returned instead of queuing a duplicate.
+Returns `202` immediately. Limited to 5 per minute per user. A pending build from the last 2 minutes is returned instead of queuing another.
 
 ```json
 { "recommendation_id": "…", "task_id": "…", "status": "pending" }
 ```
 
-### `GET /recommendations/{user_id}/?limit=20`
+**`GET /recommendations/{user_id}/?limit=20`** — cached recommendations
 
 ```json
 {
-  "user_id": "…",
-  "recommendation_id": "…",
-  "generated_at": "2026-09-21T10:00:00Z",
-  "source": "search_v1",
-  "cached": true,
-  "refresh_pending": false,
-  "count": 20,
+  "user_id": "…", "recommendation_id": "…", "generated_at": "2026-09-21T10:00:00Z",
+  "source": "search_v1", "cached": true, "refresh_pending": false, "count": 20,
   "tracks": [
-    {
-      "spotify_id": "6b2oQwSGFkzsMtQruIWm2p",
-      "name": "Creep",
-      "artists": ["Radiohead"],
-      "album": "Pablo Honey",
-      "preview_url": null,
-      "external_url": "https://open.spotify.com/track/6b2oQwSGFkzsMtQruIWm2p",
-      "popularity": 88,
-      "duration_ms": 238640,
-      "seed": "artist:Radiohead, genre:rock",
-      "score": 33.8
-    }
+    { "spotify_id": "70LcF31zb1H0PyJoS1Sx1r", "name": "Creep", "artists": ["Radiohead"],
+      "album": "Pablo Honey", "external_url": "https://open.spotify.com/track/70LcF31zb1H0PyJoS1Sx1r",
+      "seed": "artist:Radiohead, genre:rock", "score": 28.0,
+      "popularity": 0, "preview_url": null, "duration_ms": 238640 }
   ]
 }
 ```
 
-`cached` is `true` when served from Redis. `refresh_pending` is `true` when a newer list is being built, for example right after a profile change; the previous list is served in the meantime (stale-while-revalidate). `202 {"status": "pending"}` when a build is running and no earlier list exists; `404` if none was ever generated. `limit` is capped at 50.
+- `cached` is `true` when served from Redis, otherwise from the latest build in PostgreSQL.
+- `refresh_pending` is `true` while a newer list is being built; the previous list is served meanwhile.
+- `seed` explains why each track is there: `genre:`, `artist:`, `mood:`, `similar:` (discovered artist), or `fallback:pop`.
+- `202 {"status": "pending"}` when a build is running and no earlier list exists. `404` if nothing was ever generated, including the last failure reason if a build failed.
+- `limit` defaults to 20, maximum 50.
 
-### `POST /activity/`
+**`POST /activity/`** — record play, like or skip
+
+The acting user is always the authenticated user.
 
 ```json
-{ "track_id": "6b2oQwSGFkzsMtQruIWm2p", "track_name": "Creep", "artist_name": "Radiohead", "action": "play" }
+{ "track_id": "70LcF31zb1H0PyJoS1Sx1r", "track_name": "Creep", "artist_name": "Radiohead", "action": "like" }
 ```
 
-`action` is one of `play`, `like`, `skip`. Response `201` echoes the row with `user_id` and `created_at`. Throttled to 60 per minute per user.
+Returns `201` with `id`, `user_id` and `created_at`. Limited to 60 per minute per user.
 
-### `GET /analytics/summary/`
+**`GET /analytics/summary/`** — overall usage and engagement
 
 ```json
-{
-  "users": { "total": 6, "active_7d": 5 },
+{ "users": { "total": 6, "active_7d": 5 },
   "activity": { "total": 50, "by_action": { "play": 31, "like": 12, "skip": 7 }, "like_rate": 0.3871, "skip_rate": 0.2258 },
   "recommendations": { "total_generated": 5, "ready": 5, "failed": 0, "pending": 0, "avg_tracks": 20.0 },
-  "cache": { "spotify_cache_entries": 42 },
-  "generated_at": "…"
-}
+  "cache": { "spotify_cache_entries": 42 }, "generated_at": "…" }
 ```
 
-### `GET /analytics/trends/?days=7&limit=10`
+`like_rate` is likes ÷ plays, `active_7d` is distinct users with activity in the last 7 days.
+
+**`GET /analytics/trends/?days=7&limit=10`** — trending genres, artists and tracks
 
 ```json
-{
-  "window_days": 7,
+{ "window_days": 7,
   "top_genres": [ { "genre": "rock", "users": 2 } ],
   "top_artists": [ { "artist_name": "Radiohead", "interactions": 9, "likes": 3, "plays": 5 } ],
-  "top_tracks": [ { "track_id": "…", "track_name": "Creep", "artist_name": "Radiohead", "plays": 5, "likes": 3, "skips": 1, "interactions": 9 } ]
-}
+  "top_tracks": [ { "track_id": "…", "track_name": "Creep", "artist_name": "Radiohead",
+                    "plays": 5, "likes": 3, "skips": 1, "interactions": 9 } ] }
 ```
 
-### `GET /analytics/user/{user_id}/`
+Genres come from user preferences; artists and tracks from activity inside the window.
+
+**`GET /analytics/user/{user_id}/`** — one user's engagement
 
 ```json
-{
-  "user_id": "…",
+{ "user_id": "…",
   "activity": { "total": 10, "by_action": { "play": 6, "like": 3, "skip": 1 }, "like_rate": 0.5, "skip_rate": 0.1667 },
   "top_artists": [ { "artist_name": "Radiohead", "interactions": 6 } ],
   "recommendations": { "generated": 1, "last_generated_at": "…", "tracks_recommended": 20 },
-  "engagement_rate": 0.15,
-  "last_active_at": "…"
-}
+  "engagement_rate": 0.15, "last_active_at": "…" }
 ```
 
-### Utility
+`engagement_rate` is the share of recommended tracks the user has interacted with.
+
+**Utility routes**
 
 | Route | Auth | Purpose |
 |-------|------|---------|
-| `POST /auth/token/` | none | Obtain access + refresh JWT |
+| `POST /auth/token/` | none | Obtain JWT access and refresh tokens |
 | `POST /auth/token/refresh/` | none | New access token |
-| `GET /health/` | none | DB + cache check, used by the compose healthcheck |
+| `GET /health/` | none | Database and cache check |
 | `GET /api/docs/` | none | Swagger UI |
-| `/admin/` | staff | Django admin (`make superuser`) |
+| `GET /api/schema/` | none | OpenAPI 3 schema |
 
----
+### Rate limits
 
-## Background processing
+Per user, backed by Redis: 120 requests/min overall, 5/min for refresh triggers, 60/min for activity writes, 20/min for anonymous calls. Throttled responses return `429` with `Retry-After`. nginx adds a coarse 30 requests/second per IP in front.
 
-Celery with Redis as broker. Three tasks live in `apps/recommendations/tasks.py`:
+### Postman
 
-| Task | Trigger | Behaviour |
-|------|---------|-----------|
-| `refresh_user_recommendations` | refresh endpoint, profile create/update, Beat fan-out | Builds and stores recommendations. Retries up to 3× with backoff on Spotify 5xx/429. Always leaves the row `ready` or `failed`. |
-| `refresh_all_recommendations` | Beat, every `RECS_REFRESH_INTERVAL_MINUTES` (default 360) | Queues one refresh per active user |
-| `purge_expired_spotify_cache` | Beat, daily | Deletes expired `SpotifyCache` rows |
-
-Watch it work: `docker compose logs -f worker beat`.
-
-## Recommendation engine
-
-Spotify no longer offers a recommendations endpoint to newly created apps, so the recommendation logic in this service is its own. It is a **content-based recommender over the user's stated preferences**, using Spotify's catalogue as the source of candidate tracks. It lives in `apps/recommendations/engine.py` and runs inside the Celery task.
-
-### Inputs
-
-Three preference lists on the user profile:
-
-| Preference | Example | How it is used |
-|-----------|---------|----------------|
-| `favorite_genres` | `["rock", "indie"]` | one track search per genre, filtered with Spotify's `genre:` operator |
-| `favorite_artists` | `["Radiohead"]` | artist search to confirm the name, then a track search filtered with `artist:` |
-| `moods` | `["chill"]` | each mood expands to genre terms (`chill → chill, ambient, lo-fi`), searched like genres |
-
-The mood vocabulary is fixed and lives in `apps/recommendations/spotify/moods.py`:
-
-| Mood | Genre terms |
-|------|-------------|
-| happy | pop, dance |
-| sad | acoustic, singer-songwriter |
-| chill | chill, ambient, lo-fi |
-| energetic | edm, rock, hip-hop |
-| focus | classical, instrumental |
-| romantic | r-n-b, soul |
-| party | dance, reggaeton |
-| workout | hip-hop, electronic |
-
-### Spotify calls
-
-| Preference | Spotify call |
-|-----------|--------------|
-| each genre | `GET /search?type=track&q=genre:"<genre>"` |
-| each artist | `GET /search?type=artist` to confirm the artist, then `GET /search?type=track&q=artist:"<name>"` |
-| each mood | mapped to genre terms (e.g. `chill → chill, ambient, lo-fi`) and searched as above |
-
-These were verified live against a freshly created development-mode app (September 2026) and match Spotify's [February 2026 changelog](https://developer.spotify.com/documentation/web-api/references/changes/february-2026):
-
-- `GET /recommendations` was removed for new apps in November 2024 (returns 404).
-- `GET /artists/{id}/top-tracks` was removed in February 2026 (returns 403), so artist seeds use a filtered track search instead. The client still exposes the legacy call for grandfathered apps.
-- Track objects **no longer include `popularity`**, and `preview_url` is deprecated. Scoring therefore also uses each track's position in Spotify's relevance-ordered results.
-- `GET /search` now caps `limit` at 10 (previously 50). The client clamps to that ceiling.
-
-Every call goes through the persistent `SpotifyCache` table first, so users with overlapping tastes share results and the periodic refresh-all costs far fewer upstream calls than users × seeds.
-
-### Candidate pool
-
-Spotify caps every search at 10 results, so the engine pages with `offset` to build a wider pool: 20 tracks per favourite genre, 10 per favourite artist, 10 per mood term. Each page is a separate cached call.
-
-When the pool is still thin, for example a profile with a single artist or a niche genre, two more steps run in order:
-
-1. **Similar-artist expansion.** The artists that surfaced most often in the pool but were not asked for (up to 3) get their own track search. These tracks are labelled `similar:<artist>` and always rank below anything a user seed produced.
-2. **Padding.** If the pool is still short of the requested size, a `pop` search fills the remainder, labelled `fallback:pop` and ranked last.
-
-### Ranking
-
-1. **Normalise.** Each Spotify track becomes a compact record: id, name, artists, album, external link, duration, the seed that produced it, and its position in that search's result list.
-2. **De-duplicate** by Spotify track id. A track found by several searches is kept once, and every seed that found it is recorded.
-3. **Score.**
-
-   ```
-   score = distinct_search_hits × 10
-         + 5   if any hit came from a favourite artist
-         + (10 − best_position) × 0.3   relevance within Spotify's ordering
-         + popularity ÷ 10              (0 for new apps; Spotify removed the field)
-   ```
-
-   Hits are counted per *distinct search query*, not per seed label. A favourite genre and a mood that expand to the same term are one piece of evidence, not two, so a favourite artist's own tracks are not out-scored by a doubly-labelled genre hit.
-4. **Order by intent, then score.** Tracks from the user's own seeds come first, then similar-artist tracks, then padding. Within each group, higher score first.
-5. **Diversify.** At most 3 tracks per artist, raised to 5 for artists the user explicitly listed.
-6. **Trim** to `RECS_DEFAULT_LIMIT` (20).
-
-### Output
-
-Each recommended track carries its `seed` and `score`, which makes every result explainable:
-
-```json
-{ "spotify_id": "70LcF31zb1H0PyJoS1Sx1r", "name": "Creep", "artists": ["Radiohead"],
-  "album": "Pablo Honey", "external_url": "https://open.spotify.com/track/70LcF31zb1H0PyJoS1Sx1r",
-  "seed": "artist:Radiohead, genre:rock", "score": 28.0, "popularity": 0, "preview_url": null,
-  "duration_ms": 238640 }
-```
-
-### Live sample
-
-Output from the seeded demo users against the real Spotify API (development-mode app, September 2026):
-
-| User | Preferences | Top of the list |
-|------|-------------|-----------------|
-| Alice | rock, indie · Radiohead, Arctic Monkeys · chill | Creep, 505, Smells Like Teen Spirit, The Less I Know The Better |
-| Bob | hip-hop, r-n-b · Kendrick Lamar, Drake · energetic, party | Janice STFU, Not Like Us, LOVE., One Dance |
-| Carol | pop, dance · Dua Lipa, The Weeknd · happy | No Lie, Timeless, Don't Start Now, Starboy |
-| Dave | classical, jazz · Miles Davis · focus | Blue in Green, So What, 'Round Midnight, My Funny Valentine |
-| Eve | edm, electronic · Daft Punk, Fred again.. · workout | Get Lucky, Instant Crush, Victory Lap |
-
-### What it is not
-
-- Not collaborative filtering. Nothing is learned from other users' behaviour.
-- Not based on listening history. Client Credentials gives no access to a user's Spotify account.
-- Not audio-feature based. Spotify removed audio features for new apps.
-- Genre-only searches without a popularity signal can surface obscure tracks. Artist seeds are the strongest signal and are weighted accordingly; a user who lists at least one artist gets noticeably better results than one who lists genres alone.
-
-## Spotify access and mock mode
-
-Since the [February 2026 development-mode changes](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), **every development-mode app requires its owner to hold an active Spotify Premium subscription**. Without one the dashboard marks the app as blocked and API calls return `403`, even though the token endpoint still issues tokens. This cannot be worked around from the client side.
-
-To keep the service evaluable on any machine, a fixture-backed client can be switched on with one variable:
-
-```
-SPOTIFY_MOCK=1
-```
-
-| | `SPOTIFY_MOCK=0` (default) | `SPOTIFY_MOCK=1` |
-|-|----------------------------|------------------|
-| Client | `SpotifyClient` → Spotify Web API | `MockSpotifyClient` → local fixture |
-| Credentials | required, Premium-owned app | none |
-| Network | yes | no |
-| `Recommendation.source` | `search_v1` | `mock_v1` |
-| Everything downstream | identical: persistent `SpotifyCache`, Celery, Redis, analytics, throttling | |
-
-The fixture (`apps/recommendations/spotify/mock_data.py`) holds real Spotify track ids, names and artists grouped by the same genre terms the engine searches, plus top tracks for the artists used by the demo users. Mock responses take the same shape as Spotify's and pass through the same cache layer, so the code path exercised is the real one apart from the HTTP call. The `source` field on recommendation rows and in the `GET /recommendations/{id}/` response makes mock output unmistakable.
-
-If the real client receives a `403`, it fails fast with a message naming the endpoint and pointing at `SPOTIFY_MOCK`, rather than retrying. A 403 on a single artist lookup is tolerated and the build continues with the remaining seeds.
-
-## Caching
-
-| Layer | Key | TTL | Invalidated by |
-|-------|-----|-----|----------------|
-| Redis: per-user track list | `recs:{user_id}` | `RECS_CACHE_TTL_SECONDS` (1 h) | Overwritten when a build completes, deleted on profile update |
-| Redis: Spotify access token | `spotify:token` | `expires_in − 60 s` | Refetched on a 401 |
-| PostgreSQL: `SpotifyCache` | sha256(endpoint + params) | `SPOTIFY_CACHE_TTL_SECONDS` (6 h) | Expiry; purged daily by Beat |
-| Redis: throttle counters | DRF-managed | per rate window | – |
-
-Repeat requests for the same user cost zero Spotify calls until the Redis entry expires. Rebuilds for users with overlapping tastes reuse the persistent cache, so the fan-out refresh makes far fewer upstream calls than users × seeds.
-
----
-
-## Rate limiting
-
-Two layers:
-
-- **nginx** caps each client IP at 30 requests/second with a burst of 50 before traffic reaches Django.
-- **DRF throttles** are keyed on the authenticated user (IP for anonymous callers):
-
-| Scope | Default | Applies to |
-|-------|---------|-----------|
-| `anon` | 20/min | register, token endpoints |
-| `user` | 120/min | all other authenticated endpoints |
-| `refresh` | 5/min | `POST /recommendations/{id}/refresh/` |
-| `activity` | 60/min | `POST /activity/` |
-
-Throttled responses return `429` with a `Retry-After` header. Rates are configurable in `.env`.
-
----
-
-## Analytics definitions
-
-| Metric | Definition |
-|--------|-----------|
-| `like_rate` | likes ÷ plays (0 when there are no plays) |
-| `skip_rate` | skips ÷ plays |
-| `active_7d` | distinct users with any activity in the last 7 days |
-| `avg_tracks` | mean track count across `ready` recommendation rows |
-| `top_genres` | count of users listing each genre in their preferences |
-| `top_artists` / `top_tracks` | interactions within the `days` window, ordered by interactions then likes |
-| `tracks_recommended` | distinct track ids across all of the user's `ready` recommendations |
-| `engagement_rate` | distinct recommended tracks the user interacted with ÷ `tracks_recommended` |
-
----
-
-## Testing
-
-```bash
-make test            # inside the web container (uses the compose Postgres)
-```
-
-Or locally:
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 pytest
-```
-
-The OpenAPI schema is validated as part of the same workflow. It fails if any endpoint lacks a declared response or two component names collide:
-
-```bash
-python manage.py spectacular --validate --fail-on-warn --file /dev/null
-```
-
-The suite (76 tests) covers registration and profile updates, JWT and Basic auth, ownership rules, the Spotify client (token caching, persistent cache, 429/5xx/401 handling via mocked HTTP), the ranking engine, the mock client and factory, refresh and retrieve flows, Celery task failure paths, all three analytics endpoints, per-user throttling and the seed command. Celery runs eagerly and Spotify is replaced by a deterministic fake, so no network access is needed.
-
----
-
-## Project layout
-
-```
-config/            settings (base / dev / prod / test), celery app, root urls
-apps/core/         permissions, throttles, health endpoint, seed_demo command
-apps/users/        custom User, register / update / detail views, JWT token views
-apps/recommendations/
-  spotify/         client, mock client + fixture, persistent cache, mood map, exceptions
-  engine.py        candidate collection + ranking
-  tasks.py         Celery tasks
-  views.py         refresh + retrieve endpoints
-apps/activity/     UserActivity model + endpoint
-apps/analytics/    aggregation queries + endpoints
-tests/             pytest suite
-docker/            nginx config, entrypoint
-docker-compose.yml       production-style stack
-docker-compose.dev.yml   dev override (runserver, bind mounts)
-postman/           collection + environment
-```
+Import `postman/collection.json` and `postman/environment.json`, select the **Music Discovery — Local** environment, run **Auth → Login** once. Tokens and your user id are stored automatically; every other request inherits Bearer auth. A separate folder shows the same calls with HTTP Basic.
 
 ---
 
 ## Assumptions and limitations
 
-- **Spotify recommendations endpoint is deprecated** for new apps, so results come from search and artist top-tracks. Quality depends on Spotify search relevance for `genre:` queries; it is a reasonable proxy, not a collaborative-filtering engine.
-- **Live Spotify data requires the app owner to have Spotify Premium.** This is Spotify's rule for development-mode apps since February 2026; free accounts see a "blocked from accessing the Web API" banner and get 403 on every call. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated without one; it is a demo fallback, clearly labelled via `source: mock_v1`, not a substitute for the integration.
-- **Search results omit `popularity` and `preview_url`** for new apps, so `popularity` is reported as 0 and `preview_url` as null in live mode. Ranking compensates with search position.
-- **Client Credentials only.** The service never sees a user's Spotify library or listening history; recommendations reflect the preferences they type in.
-- **Genres are free text.** Spotify's genre-seed list endpoint is also deprecated, so genres are not validated. An unknown genre simply contributes no tracks.
+**Spotify**
+
+- **Spotify's recommendations endpoint is not available to new apps** (removed November 2024). Recommendations are therefore built by this service: track searches filtered by `genre:` and `artist:`, moods mapped to genre terms, results merged, scored by how many searches returned each track plus a bonus for favourite artists, capped per artist for variety. It is content-based on stated preferences, not collaborative filtering.
+- **Artist top-tracks was removed in February 2026** and returns 403. Artist seeds use an artist-filtered track search instead.
+- **Search results no longer include `popularity` or `preview_url`.** `popularity` is reported as 0 and ranking uses each track's position in Spotify's relevance order instead. Genre-only searches can therefore surface obscure tracks; listing at least one artist gives noticeably better results.
+- **Search is capped at 10 results per call.** The engine pages with `offset` to widen the pool.
+- **Live data requires a Premium-owned app.** Spotify requires this for all development-mode apps since February 2026. Free accounts see the app as blocked and every call returns 403. `SPOTIFY_MOCK=1` exists so the pipeline can be evaluated regardless.
+- **Client Credentials flow only.** The service never sees a user's Spotify library or listening history.
+- **Genres are free text**, since Spotify's genre-seed list is also gone. An unknown genre simply contributes nothing.
 - **Moods are a fixed vocabulary** mapped to genre terms in `apps/recommendations/spotify/moods.py`.
-- **Auth is deliberately minimal**: register, token, refresh, ownership checks. No email verification, password reset, token blacklisting or roles beyond Django's `is_staff`.
-- **Plain HTTP.** nginx terminates HTTP only, which is fine locally. Basic auth over HTTP sends credentials in the clear, so TLS must be added before any real deployment.
-- **Analytics are computed on read** with ORM aggregates. That is fine at this scale; under real load they would move to a rollup table or materialised views.
-- **Single Redis, single Postgres**, no high-availability considerations.
-- `market` defaults to `US` for top-tracks and search (`SPOTIFY_MARKET`).
-- `POST /users/` is intentionally dual-purpose to match the brief's "create or update" on one route. An unauthenticated upsert by email would let anyone overwrite any profile, so updates require credentials.
+
+**Service**
+
+- `POST /users/` is dual-purpose to match the brief. An unauthenticated update by email would let anyone overwrite any profile, so updates require the caller's own credentials.
+- Auth is deliberately minimal: register, token, refresh, ownership checks, Django's `is_staff`. No email verification, password reset or token blacklist.
+- nginx serves plain HTTP, which is fine locally. Basic auth over HTTP sends credentials in the clear; TLS is required before real deployment.
+- Analytics are computed on read with ORM aggregates. Fine at this scale; a rollup table would be needed under real load.
+- After a profile change the previous list is served with `refresh_pending: true` until the rebuild finishes.
+- Single Postgres and single Redis, no high availability.
+
+---
+
+## Extras beyond the brief
+
+| Extra | Why |
+|-------|-----|
+| **JWT and Basic authentication** | Per-user throttling needs an identity; Basic lets Postman and curl skip the token step |
+| **`seed_demo` command** (`make seed`) | 5 users with distinct tastes, a staff user and 50 activity rows, so every endpoint returns data immediately. Idempotent; `--flush` recreates, `--no-refresh` skips Spotify |
+| **Mock Spotify mode** (`SPOTIFY_MOCK=1`) | Fixture of real track data served through the same client interface and cache. Labelled `source: mock_v1` so it cannot be mistaken for live output |
+| **Development compose override** (`make dev`) | runserver with autoreload, code bind-mounted, DB and Redis published, no nginx |
+| **Swagger UI and OpenAPI schema** | Generated from the views; validated in CI with `manage.py spectacular --validate --fail-on-warn` |
+| **Health endpoint** | Database and cache check, used by the compose healthcheck |
+| **Function-based views throughout** | Every endpoint is an `@api_view` function; classes are used for models, serializers, permissions, throttles and clients |
+| **Persistent Spotify cache table** | Every Spotify response stored in PostgreSQL with an expiry, on top of the Redis layer, so rebuilds for overlapping tastes cost few upstream calls |
+| **Celery Beat cache purge** | Daily cleanup of expired Spotify cache rows |
+| **83 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
+| **Makefile and Postman collection** | One-command setup; collection with login script and both auth styles |
