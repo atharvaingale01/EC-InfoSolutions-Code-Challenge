@@ -18,6 +18,7 @@ load_dotenv(BASE_DIR / ".env")
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
+INSECURE_SECRET_KEYS = {"", "insecure-dev-key-change-me", "change-me-to-a-long-random-string"}
 SECRET_KEY = env("DJANGO_SECRET_KEY", "insecure-dev-key-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
@@ -184,7 +185,6 @@ SPOTIFY_CLIENT_ID = env("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = env("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_MARKET = env("SPOTIFY_MARKET", "US")
 SPOTIFY_CACHE_TTL_SECONDS = env_int("SPOTIFY_CACHE_TTL_SECONDS", 21600)
-SPOTIFY_USE_RECOMMENDATIONS_ENDPOINT = env_bool("SPOTIFY_USE_RECOMMENDATIONS_ENDPOINT", False)
 # Serve fixture data instead of calling Spotify (for evaluation without a Premium-owned app).
 SPOTIFY_MOCK = env_bool("SPOTIFY_MOCK", False)
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"

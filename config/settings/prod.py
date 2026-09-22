@@ -1,6 +1,21 @@
+import warnings
+
+from django.core.exceptions import ImproperlyConfigured
+
 from .base import *  # noqa: F401,F403
+from .base import INSECURE_SECRET_KEYS, SECRET_KEY
+from .env import env_bool
 
 DEBUG = False
+
+if SECRET_KEY in INSECURE_SECRET_KEYS:
+    if env_bool("DJANGO_ALLOW_INSECURE_SECRET", False):
+        warnings.warn("DJANGO_SECRET_KEY is a placeholder; do not deploy like this.", stacklevel=1)
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is missing or still the placeholder. Set a long random value in "
+            ".env (or DJANGO_ALLOW_INSECURE_SECRET=1 for a throwaway local run)."
+        )
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
