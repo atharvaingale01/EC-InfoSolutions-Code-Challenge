@@ -21,6 +21,7 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 LOGGING["root"]["level"] = "WARNING"  # noqa: F405
 LOGGING["loggers"]["apps"]["level"] = "WARNING"  # noqa: F405
+LOGGING["loggers"]["apps.requests"]["level"] = "WARNING"  # noqa: F405
 
 SPOTIFY_MOCK = False
 SPOTIFY_CLIENT_ID = "test-client-id"

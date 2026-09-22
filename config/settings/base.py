@@ -44,6 +44,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "apps.core.middleware.RequestIDMiddleware",  # first: every later log line carries the id
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -217,18 +218,31 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # Logging
 # ---------------------------------------------------------------------------
 LOG_LEVEL = env("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = env("LOG_FORMAT", "text").lower()  # "text" for humans, "json" for aggregators
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {"context": {"()": "apps.core.logging.ContextFilter"}},
     "formatters": {
-        "default": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+        "text": {
+            "format": (
+                "%(asctime)s %(levelname)s %(name)s rid=%(request_id)s task=%(task_id)s %(message)s"
+            )
+        },
+        "json": {"()": "apps.core.logging.JsonFormatter"},
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "default"},
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": LOG_FORMAT if LOG_FORMAT in ("text", "json") else "text",
+            "filters": ["context"],
+        },
     },
     "root": {"handlers": ["console"], "level": LOG_LEVEL},
     "loggers": {
         "django.request": {"level": "WARNING"},
         "apps": {"level": LOG_LEVEL},
+        "apps.requests": {"level": "INFO"},
+        "apps.audit": {"level": "WARNING"},
     },
 }

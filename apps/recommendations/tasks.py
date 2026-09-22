@@ -10,6 +10,8 @@ from django.db.models import F, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
 
+from apps.core.logging import current_request_id, request_id_var
+
 from .engine import build_recommendations
 from .models import QUEUE_TTL, Recommendation, SpotifyCache
 from .spotify.exceptions import (
@@ -47,7 +49,10 @@ def enqueue_refresh(user, countdown: int = 0, expires: int | None = None) -> Rec
     """Create the pending row first so the API can report it, then queue the task."""
     rec = Recommendation.objects.create(user=user)
     result = refresh_user_recommendations.apply_async(
-        args=[str(user.pk), str(rec.pk)], countdown=countdown, expires=expires
+        args=[str(user.pk), str(rec.pk)],
+        kwargs={"request_id": current_request_id()},  # correlate worker logs with the request
+        countdown=countdown,
+        expires=expires,
     )
     task_id = getattr(result, "id", None)
     if task_id:
@@ -65,12 +70,16 @@ def enqueue_refresh(user, countdown: int = 0, expires: int | None = None) -> Rec
     acks_late=True,
     soft_time_limit=SOFT_TIME_LIMIT,
 )
-def refresh_user_recommendations(self, user_id: str, recommendation_id: str | None = None):
+def refresh_user_recommendations(
+    self, user_id: str, recommendation_id: str | None = None, request_id: str | None = None
+):
     """
     Build recommendations for one user. Always leaves the Recommendation row in
     a terminal state once retries are exhausted, never overwrites a newer build,
     and re-queues itself if the preferences changed while it was running.
     """
+    if request_id and request_id != "-":
+        request_id_var.set(request_id)  # every log line below carries the originating request
     rec = None
     if recommendation_id:
         rec = Recommendation.objects.filter(pk=recommendation_id).first()

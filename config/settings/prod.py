@@ -3,10 +3,13 @@ import warnings
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F401,F403
-from .base import INSECURE_SECRET_KEYS, REST_FRAMEWORK, SECRET_KEY
-from .env import env_bool
+from .base import INSECURE_SECRET_KEYS, LOGGING, REST_FRAMEWORK, SECRET_KEY
+from .env import env, env_bool
 
 DEBUG = False
+
+# Structured logs by default in production; override with LOG_FORMAT=text.
+LOGGING["handlers"]["console"]["formatter"] = env("LOG_FORMAT", "json").lower()  # noqa: F405
 
 if SECRET_KEY in INSECURE_SECRET_KEYS:
     if env_bool("DJANGO_ALLOW_INSECURE_SECRET", False):
