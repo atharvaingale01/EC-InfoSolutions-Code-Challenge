@@ -43,7 +43,9 @@ DEMO_USERS = [
     },
 ]
 
-DEMO_STAFF = {"email": "admin@example.com", "name": "Admin", "is_staff": True, "is_superuser": True}
+# Staff but NOT superuser: can use the staff paths of the API and log into
+# /admin/, but has no model permissions there. Demo credentials are public.
+DEMO_STAFF = {"email": "admin@example.com", "name": "Admin", "is_staff": True}
 
 # (track_id, track_name, artist_name) — real Spotify IDs so activity lines up
 # with what the search-based recommendations are likely to return.
