@@ -108,6 +108,9 @@ CACHES = {
         "KEY_PREFIX": "music",
     }
 }
+# A Redis outage degrades to cache misses (DB fallback) instead of 500s.
+DJANGO_REDIS_IGNORE_EXCEPTIONS = True
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 
 # ---------------------------------------------------------------------------
 # Celery
@@ -154,6 +157,10 @@ REST_FRAMEWORK = {
         "refresh": env("THROTTLE_REFRESH", "5/min"),
         "activity": env("THROTTLE_ACTIVITY", "60/min"),
     },
+    # Number of trusted proxies in front of Django; prod sets 1 (nginx). With this
+    # unset DRF would key anonymous throttles on the whole X-Forwarded-For string,
+    # which a client controls.
+    "NUM_PROXIES": 0,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "EXCEPTION_HANDLER": "apps.core.exceptions.exception_handler",
@@ -176,7 +183,8 @@ SPECTACULAR_SETTINGS = {
     "SECURITY": [{"jwtAuth": []}, {"basicAuth": []}],
 }
 
-CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", True)
+CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "")
 
 # ---------------------------------------------------------------------------
 # Spotify / recommendations
@@ -208,6 +216,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+LOG_LEVEL = env("LOG_LEVEL", "INFO").upper()
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -217,9 +226,9 @@ LOGGING = {
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "default"},
     },
-    "root": {"handlers": ["console"], "level": env("LOG_LEVEL", "INFO")},
+    "root": {"handlers": ["console"], "level": LOG_LEVEL},
     "loggers": {
         "django.request": {"level": "WARNING"},
-        "apps": {"level": env("LOG_LEVEL", "INFO")},
+        "apps": {"level": LOG_LEVEL},
     },
 }

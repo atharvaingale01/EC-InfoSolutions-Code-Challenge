@@ -3,7 +3,7 @@ import warnings
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F401,F403
-from .base import INSECURE_SECRET_KEYS, SECRET_KEY
+from .base import INSECURE_SECRET_KEYS, REST_FRAMEWORK, SECRET_KEY
 from .env import env_bool
 
 DEBUG = False
@@ -17,7 +17,9 @@ if SECRET_KEY in INSECURE_SECRET_KEYS:
             ".env (or DJANGO_ALLOW_INSECURE_SECRET=1 for a throwaway local run)."
         )
 
+# nginx is the single trusted hop: it overwrites X-Forwarded-For/-Proto, so DRF
+# may take the last forwarded address as the client identity for throttling.
+REST_FRAMEWORK["NUM_PROXIES"] = 1
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-USE_X_FORWARDED_HOST = True
 SESSION_COOKIE_SECURE = False  # nginx terminates plain HTTP in this assignment
 CSRF_COOKIE_SECURE = False
