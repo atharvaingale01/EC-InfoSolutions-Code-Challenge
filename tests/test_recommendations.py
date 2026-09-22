@@ -82,6 +82,14 @@ class TestRetrieve:
         resp = auth_client.get(f"/recommendations/{user.pk}/")
         assert resp.json()["cached"] is True  # re-warmed
 
+    def test_refresh_pending_flag_while_rebuilding(self, auth_client, user):
+        auth_client.post(f"/recommendations/{user.pk}/refresh/")  # eager -> ready
+        assert auth_client.get(f"/recommendations/{user.pk}/").json()["refresh_pending"] is False
+        Recommendation.objects.create(user=user)  # a rebuild in flight
+        body = auth_client.get(f"/recommendations/{user.pk}/").json()
+        assert body["refresh_pending"] is True
+        assert body["count"] > 0  # previous list still served
+
     def test_limit_param(self, auth_client, user):
         auth_client.post(f"/recommendations/{user.pk}/refresh/")
         resp = auth_client.get(f"/recommendations/{user.pk}/?limit=2")

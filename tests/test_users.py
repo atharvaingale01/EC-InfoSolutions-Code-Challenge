@@ -76,7 +76,19 @@ class TestUpdate:
     def test_update_requeues_recommendations(self, auth_client, user):
         assert Recommendation.objects.filter(user=user).count() == 0
         auth_client.post("/users/", {"moods": ["happy"]}, format="json")
-        assert Recommendation.objects.filter(user=user, status="ready").count() == 1
+        rec = Recommendation.objects.get(user=user)
+        assert rec.status == "ready" and rec.task_id  # row created up front, then built
+
+    def test_update_marks_failed_when_broker_is_down(self, auth_client, user, monkeypatch):
+        from apps.recommendations import tasks
+
+        def boom(*a, **k):
+            raise ConnectionError("broker down")
+
+        monkeypatch.setattr(tasks.refresh_user_recommendations, "delay", boom)
+        resp = auth_client.post("/users/", {"moods": ["happy"]}, format="json")
+        assert resp.status_code == 200  # profile write still succeeds
+        assert Recommendation.objects.get(user=user).status == "failed"
 
 
 @pytest.mark.django_db
