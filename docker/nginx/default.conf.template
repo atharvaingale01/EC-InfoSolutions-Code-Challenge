@@ -4,6 +4,9 @@ limit_req_zone $binary_remote_addr zone=api:10m rate=${NGINX_RATE_LIMIT}r/s;
 limit_req_zone $binary_remote_addr zone=login:10m rate=1r/s;  # admin login brute-force guard
 limit_req_status 429;  # same status as the per-user throttles in Django
 
+log_format correlated '$remote_addr [$time_local] "$request" $status $body_bytes_sent rid=$request_id rt=$request_time';
+access_log /var/log/nginx/access.log correlated;
+
 upstream django {
     server web:8000;
 }
