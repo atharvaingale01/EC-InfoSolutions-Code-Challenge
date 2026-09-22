@@ -34,15 +34,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/users/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "users"
-              ]
-            },
+            "url": "{{base_url}}/users/",
             "description": "No token \u2192 registers. Same route with a token updates your own profile.",
             "body": {
               "mode": "raw",
@@ -77,16 +69,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/auth/token/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "auth",
-                "token"
-              ]
-            },
+            "url": "{{base_url}}/auth/token/",
             "description": "",
             "body": {
               "mode": "raw",
@@ -122,17 +105,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/auth/token/refresh/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "auth",
-                "token",
-                "refresh"
-              ]
-            },
+            "url": "{{base_url}}/auth/token/refresh/",
             "description": "",
             "body": {
               "mode": "raw",
@@ -171,15 +144,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/users/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "users"
-              ]
-            },
+            "url": "{{base_url}}/users/",
             "description": "Partial update of the caller's own profile. Triggers a recommendation refresh.",
             "body": {
               "mode": "raw",
@@ -205,16 +170,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/users/{{user_id}}/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "users",
-                "{{user_id}}"
-              ]
-            },
+            "url": "{{base_url}}/users/{{user_id}}/",
             "description": ""
           },
           "response": []
@@ -229,17 +185,7 @@
           "request": {
             "method": "POST",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/recommendations/{{user_id}}/refresh/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "recommendations",
-                "{{user_id}}",
-                "refresh"
-              ]
-            },
+            "url": "{{base_url}}/recommendations/{{user_id}}/refresh/",
             "description": "Returns 202 with a task id. Throttled to 5/min per user."
           },
           "response": []
@@ -249,22 +195,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/recommendations/{{user_id}}/?limit=20",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "recommendations",
-                "{{user_id}}"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "20"
-                }
-              ]
-            },
+            "url": "{{base_url}}/recommendations/{{user_id}}/?limit=20",
             "description": "200 with tracks, 202 while pending, 404 if never generated."
           },
           "response": []
@@ -284,15 +215,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/activity/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "activity"
-              ]
-            },
+            "url": "{{base_url}}/activity/",
             "description": "",
             "body": {
               "mode": "raw",
@@ -311,15 +234,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/activity/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "activity"
-              ]
-            },
+            "url": "{{base_url}}/activity/",
             "description": "",
             "body": {
               "mode": "raw",
@@ -338,15 +253,7 @@
                 "value": "application/json"
               }
             ],
-            "url": {
-              "raw": "{{base_url}}/activity/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "activity"
-              ]
-            },
+            "url": "{{base_url}}/activity/",
             "description": "",
             "body": {
               "mode": "raw",
@@ -365,16 +272,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/analytics/summary/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "analytics",
-                "summary"
-              ]
-            },
+            "url": "{{base_url}}/analytics/summary/",
             "description": ""
           },
           "response": []
@@ -384,26 +282,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/analytics/trends/?days=7&limit=10",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "analytics",
-                "trends"
-              ],
-              "query": [
-                {
-                  "key": "days",
-                  "value": "7"
-                },
-                {
-                  "key": "limit",
-                  "value": "10"
-                }
-              ]
-            },
+            "url": "{{base_url}}/analytics/trends/?days=7&limit=10",
             "description": ""
           },
           "response": []
@@ -413,17 +292,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/analytics/user/{{user_id}}/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "analytics",
-                "user",
-                "{{user_id}}"
-              ]
-            },
+            "url": "{{base_url}}/analytics/user/{{user_id}}/",
             "description": ""
           },
           "response": []
@@ -439,16 +308,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/users/{{user_id}}/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "users",
-                "{{user_id}}"
-              ]
-            },
+            "url": "{{base_url}}/users/{{user_id}}/",
             "description": "",
             "auth": {
               "type": "basic",
@@ -473,16 +333,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/recommendations/{{user_id}}/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "recommendations",
-                "{{user_id}}"
-              ]
-            },
+            "url": "{{base_url}}/recommendations/{{user_id}}/",
             "description": "",
             "auth": {
               "type": "basic",
@@ -507,16 +358,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/analytics/summary/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "analytics",
-                "summary"
-              ]
-            },
+            "url": "{{base_url}}/analytics/summary/",
             "description": "",
             "auth": {
               "type": "basic",
@@ -546,15 +388,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/health/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "health"
-              ]
-            },
+            "url": "{{base_url}}/health/",
             "description": "",
             "auth": {
               "type": "noauth"
@@ -567,16 +401,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/schema/",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "schema"
-              ]
-            },
+            "url": "{{base_url}}/api/schema/",
             "description": "",
             "auth": {
               "type": "noauth"
