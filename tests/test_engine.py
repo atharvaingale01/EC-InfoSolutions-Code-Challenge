@@ -170,3 +170,29 @@ def test_genre_search_pages_past_spotify_cap(fake_spotify, user):
         c for c in fake_spotify.calls if c[0] == "search_tracks" and c[1] == 'genre:"rock"'
     ]
     assert len(rock_calls) == 2  # GENRE_SEARCH_LIMIT=20 -> two pages of 10
+
+
+def test_same_song_under_different_ids_is_kept_once():
+    variants = [
+        ("a1", "Kho Gaye Hum Kahan"),
+        ("a2", 'Kho Gaye Hum Kahan (From "Baar Baar Dekho")'),
+        ("a3", "Kho Gaye Hum Kahan - Acoustic"),
+        ("b1", "Dreams - 2004 Remaster"),
+        ("b2", "Dreams"),
+    ]
+    cands = [
+        engine.normalise_track(make_track(tid, name, "Jasleen Royal", 50), "genre:x", i, "q")
+        for i, (tid, name) in enumerate(variants)
+    ]
+    ranked = engine.rank(cands, limit=10)
+    assert [t["spotify_id"] for t in ranked] == ["a1", "b1"]
+
+
+def test_song_key_normalisation():
+    key = lambda name: engine.song_key({"name": name, "artists": ["Arijit Singh"]})  # noqa: E731
+    assert key('Gehra Hua (From "Dhurandhar")') == key("Gehra Hua")
+    assert key("Tum Hi Ho - Radio Edit") == key("Tum Hi Ho")
+    assert key("Creep") != key("Karma Police")
+    assert engine.song_key({"name": "Creep", "artists": ["Radiohead"]}) != engine.song_key(
+        {"name": "Creep", "artists": ["TLC"]}
+    )
