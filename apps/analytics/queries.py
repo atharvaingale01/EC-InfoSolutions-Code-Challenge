@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Max, Q
+from django.db.models import Count, F, Func, IntegerField, Max, Q, Sum
 from django.utils import timezone
 
 from apps.activity.models import UserActivity
@@ -34,11 +34,13 @@ def summary() -> dict:
 
     recs = Recommendation.objects.all()
     ready_recs = recs.filter(status=Recommendation.Status.READY)
-    ready_count = ready_recs.count()
-    total_tracks = 0
-    if ready_count:
-        # tracks is JSON; length must be computed in Python (cheap at assignment scale)
-        total_tracks = sum(len(t) for t in ready_recs.values_list("tracks", flat=True))
+    agg = ready_recs.aggregate(
+        n=Count("id"),
+        # jsonb_array_length runs in Postgres, so rows never stream into Python.
+        tracks=Sum(Func(F("tracks"), function="jsonb_array_length", output_field=IntegerField())),
+    )
+    ready_count = agg["n"] or 0
+    total_tracks = agg["tracks"] or 0
 
     return {
         "users": {
