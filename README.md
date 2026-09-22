@@ -245,6 +245,7 @@ Queues a background rebuild. Throttled to 5 per minute per user. If a `pending` 
   "generated_at": "2026-09-21T10:00:00Z",
   "source": "search_v1",
   "cached": true,
+  "refresh_pending": false,
   "count": 20,
   "tracks": [
     {
@@ -263,7 +264,7 @@ Queues a background rebuild. Throttled to 5 per minute per user. If a `pending` 
 }
 ```
 
-`cached` is `true` when served from Redis. `202 {"status": "pending"}` while a build is running; `404` if none was ever generated. `limit` is capped at 50.
+`cached` is `true` when served from Redis. `refresh_pending` is `true` when a newer list is being built, for example right after a profile change; the previous list is served in the meantime (stale-while-revalidate). `202 {"status": "pending"}` when a build is running and no earlier list exists; `404` if none was ever generated. `limit` is capped at 50.
 
 ### `POST /activity/`
 
