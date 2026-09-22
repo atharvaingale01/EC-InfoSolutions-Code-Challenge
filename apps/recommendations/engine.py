@@ -13,6 +13,7 @@ list (Spotify's relevance order) feeds the score as well.
 """
 
 import logging
+import re
 from collections import defaultdict
 
 from django.conf import settings
@@ -37,6 +38,30 @@ SEED_HIT_WEIGHT = 10.0
 ARTIST_SEED_BONUS = 5.0
 POSITION_WEIGHT = 0.3  # per rank step from the top of a search result list
 RELEVANCE_SPAN = 10  # positions beyond this add nothing
+
+
+_TITLE_NOISE = re.compile(
+    r"\s*(\(|\[|-\s)"
+    r"(from|feat\.?|featuring|remaster(ed)?|radio edit|single version|album version|"
+    r"slowed|sped up|live|acoustic|original mix|bonus track|deluxe|\d{4} remaster)"
+    r"[^)\]]*(\)|\])?\s*$",
+    re.IGNORECASE,
+)
+
+
+def song_key(track: dict) -> tuple[str, str]:
+    """
+    Same song, different Spotify id (film version, album version, single,
+    remaster) collapses to one key: normalised title + primary artist.
+    """
+    title = track.get("name", "").casefold()
+    # strip one or two trailing qualifiers such as ' (From "Film")' or ' - 2004 Remaster'
+    for _ in range(2):
+        title = _TITLE_NOISE.sub("", title).strip()
+    title = re.sub(r"[^\w\s]", "", title)
+    title = re.sub(r"\s+", " ", title).strip()
+    primary = (track.get("artists") or [""])[0].casefold()
+    return title, primary
 
 
 def normalise_track(item: dict, seed: str, position: int = 0, query: str = "") -> dict | None:
@@ -191,12 +216,17 @@ def rank(candidates: list[dict], limit: int) -> list[dict]:
     )
 
     per_artist: dict[str, int] = defaultdict(int)
+    seen_songs: set[tuple[str, str]] = set()
     result: list[dict] = []
     for track in ordered:
+        key = song_key(track)
+        if key in seen_songs:
+            continue  # another release of a song we already have
         primary = track["artists"][0] if track["artists"] else ""
         cap = MAX_PER_FAVOURITE_ARTIST if track["spotify_id"] in artist_seeded else MAX_PER_ARTIST
         if per_artist[primary] >= cap:
             continue
+        seen_songs.add(key)
         per_artist[primary] += 1
         result.append(track)
         if len(result) >= limit:
