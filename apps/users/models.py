@@ -1,3 +1,5 @@
+import hashlib
+import json
 import uuid
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
@@ -41,3 +43,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def has_preferences(self) -> bool:
         return bool(self.favorite_genres or self.favorite_artists or self.moods)
+
+    @property
+    def preferences(self) -> tuple:
+        return (list(self.favorite_genres), list(self.favorite_artists), list(self.moods))
+
+    @property
+    def preferences_hash(self) -> str:
+        payload = json.dumps(self.preferences, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()
