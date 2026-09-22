@@ -17,39 +17,39 @@ class ActivityStatsSerializer(serializers.Serializer):
 
 
 class SummarySerializer(serializers.Serializer):
-    class Users(serializers.Serializer):
+    class SummaryUsers(serializers.Serializer):
         total = serializers.IntegerField()
         active_7d = serializers.IntegerField()
 
-    class Recs(serializers.Serializer):
+    class SummaryRecommendations(serializers.Serializer):
         total_generated = serializers.IntegerField()
         ready = serializers.IntegerField()
         failed = serializers.IntegerField()
         pending = serializers.IntegerField()
         avg_tracks = serializers.FloatField()
 
-    class Cache(serializers.Serializer):
+    class SummaryCache(serializers.Serializer):
         spotify_cache_entries = serializers.IntegerField()
 
-    users = Users()
+    users = SummaryUsers()
     activity = ActivityStatsSerializer()
-    recommendations = Recs()
-    cache = Cache()
+    recommendations = SummaryRecommendations()
+    cache = SummaryCache()
     generated_at = serializers.DateTimeField()
 
 
 class TrendsSerializer(serializers.Serializer):
-    class Genre(serializers.Serializer):
+    class TrendGenre(serializers.Serializer):
         genre = serializers.CharField()
         users = serializers.IntegerField()
 
-    class Artist(serializers.Serializer):
+    class TrendArtist(serializers.Serializer):
         artist_name = serializers.CharField()
         interactions = serializers.IntegerField()
         likes = serializers.IntegerField()
         plays = serializers.IntegerField()
 
-    class Track(serializers.Serializer):
+    class TrendTrack(serializers.Serializer):
         track_id = serializers.CharField()
         track_name = serializers.CharField()
         artist_name = serializers.CharField()
@@ -59,24 +59,24 @@ class TrendsSerializer(serializers.Serializer):
         interactions = serializers.IntegerField()
 
     window_days = serializers.IntegerField()
-    top_genres = Genre(many=True)
-    top_artists = Artist(many=True)
-    top_tracks = Track(many=True)
+    top_genres = TrendGenre(many=True)
+    top_artists = TrendArtist(many=True)
+    top_tracks = TrendTrack(many=True)
 
 
 class UserSummarySerializer(serializers.Serializer):
-    class Artist(serializers.Serializer):
+    class UserTopArtist(serializers.Serializer):
         artist_name = serializers.CharField()
         interactions = serializers.IntegerField()
 
-    class Recs(serializers.Serializer):
+    class UserRecommendations(serializers.Serializer):
         generated = serializers.IntegerField()
         last_generated_at = serializers.DateTimeField(allow_null=True)
         tracks_recommended = serializers.IntegerField()
 
     user_id = serializers.UUIDField()
     activity = ActivityStatsSerializer()
-    top_artists = Artist(many=True)
-    recommendations = Recs()
+    top_artists = UserTopArtist(many=True)
+    recommendations = UserRecommendations()
     engagement_rate = serializers.FloatField()
     last_active_at = serializers.DateTimeField(allow_null=True)
