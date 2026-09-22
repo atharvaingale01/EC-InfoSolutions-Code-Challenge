@@ -28,14 +28,35 @@ make seed    # 5 demo users, a staff user, sample activity; queues recommendatio
 
 The API is on <http://localhost/>. Swagger UI is at <http://localhost/api/docs/>. If port 80 is taken, use `NGINX_PORT=8080 make up`.
 
-Without `make`:
+Without `make` (the same steps, spelled out):
 
 ```bash
 cp .env.example .env
 # set DJANGO_SECRET_KEY to any long random string (the placeholder is rejected by the
 # production settings), then set the Spotify credentials or SPOTIFY_MOCK=1
-docker compose up -d --build
-docker compose exec web python manage.py seed_demo
+
+docker compose up -d --build                               # build image; start db, redis, web, worker, beat, nginx
+docker compose ps                                          # web runs migrations first, then the others start
+docker compose logs -f web                                 # Ctrl+C to stop following
+docker compose exec web python manage.py seed_demo         # demo users, activity, queued recommendations
+curl http://localhost/health/
+
+docker compose logs -f worker                              # recommendation builds (JSON lines with request ids)
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test web pytest
+docker compose exec web ruff check .
+
+docker compose down                                        # stop, keep data
+docker compose down -v                                     # stop and delete data
+```
+
+The first build downloads the Python packages, so allow a few minutes on a slow network. Port 80 must be free; otherwise set `NGINX_PORT=8080` in `.env`.
+
+**Development stack** (Django `runserver` with autoreload, code bind-mounted, no nginx; Django on 8000, Postgres on 15432, Redis on 16379 so local installs do not collide; containers run as your host user):
+
+```bash
+make dev                      # or:  UID=$(id -u) GID=$(id -g) docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+DEV=1 make seed               # any target works against the dev stack with DEV=1
+make dev-down
 ```
 
 **Services started**
@@ -309,5 +330,5 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 | **Function-based views throughout** | Every endpoint is an `@api_view` function; classes are used for models, serializers, permissions, throttles and clients |
 | **Persistent Spotify cache table** | Every Spotify response stored in PostgreSQL with an expiry, on top of the Redis layer, so rebuilds for overlapping tastes cost few upstream calls |
 | **Celery Beat cache purge** | Daily cleanup of expired Spotify cache rows |
-| **122 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
+| **123 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
 | **Makefile and Postman collection** | One-command setup; collection with login script and both auth styles |
