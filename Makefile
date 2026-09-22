@@ -8,8 +8,12 @@ WEB         := $(COMPOSE) exec web
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-env: ## Create .env from .env.example if missing
-	@test -f .env || (cp .env.example .env && echo "Created .env — add your Spotify credentials")
+env: ## Create .env from .env.example if missing (generates a random DJANGO_SECRET_KEY)
+	@test -f .env || ( \
+		cp .env.example .env && \
+		KEY=$$( (openssl rand -base64 48 2>/dev/null || head -c 48 /dev/urandom | base64) | tr -d '\n=/+' ) && \
+		sed -i.bak "s|^DJANGO_SECRET_KEY=.*|DJANGO_SECRET_KEY=$$KEY|" .env && rm -f .env.bak && \
+		echo "Created .env with a generated DJANGO_SECRET_KEY — add your Spotify credentials" )
 
 up: env ## Build and start the full stack (nginx on :80)
 	$(COMPOSE) up -d --build
