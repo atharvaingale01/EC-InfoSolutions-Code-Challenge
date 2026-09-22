@@ -124,6 +124,8 @@ Import `postman/collection.json` and `postman/environment.json`. Run **Auth → 
                                   └────────────┴──► Spotify Web API
 ```
 
+**Code style.** Every endpoint is a Django REST Framework **function-based view** (`@api_view`) with permissions and throttles applied as decorators. Classes are used for models, serializers, permissions, throttles and the Spotify clients, never for views. The two JWT routes are function wrappers over SimpleJWT's serializers for the same reason.
+
 **Recommendation flow**
 
 1. `POST /recommendations/{user_id}/refresh/` creates a `Recommendation` row with status `pending` and enqueues a Celery task. Responds `202` immediately.
@@ -514,7 +516,7 @@ The suite (76 tests) covers registration and profile updates, JWT and Basic auth
 ```
 config/            settings (base / dev / prod / test), celery app, root urls
 apps/core/         permissions, throttles, health endpoint, seed_demo command
-apps/users/        custom User, register / update / detail views, JWT routes
+apps/users/        custom User, register / update / detail views, JWT token views
 apps/recommendations/
   spotify/         client, mock client + fixture, persistent cache, mood map, exceptions
   engine.py        candidate collection + ranking
