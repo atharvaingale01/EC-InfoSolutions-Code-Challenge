@@ -224,3 +224,11 @@ ARTIST_TOP_TRACKS: dict[str, list[dict]] = {
         _t("0ZXXtvNwDRNuvVWyvHT7Zm", "Jungle", "Fred again..", "Jungle", 76),
     ],
 }
+
+
+# Indian catalogue (market IN) lives in its own module and is merged here so the
+# mock client answers the Indian demo profiles as well as the Western ones.
+from .mock_data_in import ARTIST_TOP_TRACKS_IN, TRACKS_BY_GENRE_IN  # noqa: E402
+
+TRACKS_BY_GENRE.update(TRACKS_BY_GENRE_IN)
+ARTIST_TOP_TRACKS.update(ARTIST_TOP_TRACKS_IN)
