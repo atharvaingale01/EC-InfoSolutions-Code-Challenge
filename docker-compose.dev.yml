@@ -5,52 +5,54 @@
 #
 # Differences from the base stack:
 #   * source tree bind-mounted, Django runserver with autoreload
+#   * containers run as your host uid/gid so files they create are yours
 #   * DEBUG on, dev settings, browsable API
-#   * Postgres / Redis / Django published on the host for local tooling
+#   * Postgres / Redis / Django published on the host (15432 / 16379 / 8000)
 #   * nginx is not started (Django is reached directly on :8000)
 #   * separate project name and volumes, so it can run next to the prod stack
 
 name: music-discovery-dev
 
 services:
+x-dev: &dev
+  # Match the host user so bind-mounted files stay writable and owned by you.
+  # `make dev` exports UID/GID; the defaults suit most single-user Linux setups.
+  user: "${UID:-1000}:${GID:-1000}"
+  volumes:
+    - .:/app
+  environment:
+    DJANGO_SETTINGS_MODULE: config.settings.dev
+    DJANGO_DEBUG: "1"
+    HOME: /tmp
+
+services:
   db:
     ports:
-      - "${DEV_DB_PORT:-5432}:5432"
+      - "${DEV_DB_PORT:-15432}:5432"
 
   redis:
     ports:
-      - "${DEV_REDIS_PORT:-6379}:6379"
+      - "${DEV_REDIS_PORT:-16379}:6379"
 
   web:
+    <<: *dev
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       DJANGO_DEBUG: "1"
+      HOME: /tmp
       RUN_MIGRATIONS: "1"
-    volumes:
-      - .:/app
-      - dev_static:/app/staticfiles
+      RUN_COLLECTSTATIC: "0"   # runserver serves static files itself with DEBUG on
     ports:
       - "${DEV_WEB_PORT:-8000}:8000"
 
   worker:
+    <<: *dev
     command: ["celery", "-A", "config", "worker", "-l", "debug", "--concurrency=1"]
-    environment:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      DJANGO_DEBUG: "1"
-    volumes:
-      - .:/app
 
   beat:
-    environment:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      DJANGO_DEBUG: "1"
-    volumes:
-      - .:/app
+    <<: *dev
 
   nginx:
     # Not needed in dev; assigning a profile keeps it from starting by default.
     profiles: ["edge"]
-
-volumes:
-  dev_static:

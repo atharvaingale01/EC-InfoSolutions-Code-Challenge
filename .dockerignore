@@ -12,6 +12,11 @@ venv
 staticfiles
 htmlcov
 .coverage
+db.sqlite3
+media
+*.log
+.idea
+.vscode
 postman
 PLAN.md
 README.md

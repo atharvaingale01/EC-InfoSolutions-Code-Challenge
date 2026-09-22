@@ -1,9 +1,12 @@
 .DEFAULT_GOAL := help
 COMPOSE     ?= docker compose
 COMPOSE_DEV ?= docker compose -f docker-compose.yml -f docker-compose.dev.yml
-WEB         := $(COMPOSE) exec web
+# Run any target against the dev stack with DEV=1, e.g. `DEV=1 make seed`.
+ACTIVE      := $(if $(DEV),$(COMPOSE_DEV),$(COMPOSE))
+WEB         := $(ACTIVE) exec web
+ENV_PORT     = $$(grep -E '^$(1)=' .env 2>/dev/null | cut -d= -f2)
 
-.PHONY: help env up down build restart logs ps dev dev-down dev-logs migrate makemigrations superuser seed shell dbshell test lint fmt clean
+.PHONY: help env up down build restart logs ps dev dev-down dev-logs migrate makemigrations superuser seed shell dbshell test lint schema fmt clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -17,7 +20,7 @@ env: ## Create .env from .env.example if missing (generates a random DJANGO_SECR
 
 up: env ## Build and start the full stack (nginx on :80)
 	$(COMPOSE) up -d --build
-	@echo "API: http://localhost:$${NGINX_PORT:-80}/   Docs: http://localhost:$${NGINX_PORT:-80}/api/docs/"
+	@P=$(call ENV_PORT,NGINX_PORT); P=$${P:-80}; echo "API: http://localhost:$$P/   Docs: http://localhost:$$P/api/docs/"
 
 down: ## Stop the stack (keeps volumes)
 	$(COMPOSE) down
@@ -35,8 +38,8 @@ ps: ## Show service status
 	$(COMPOSE) ps
 
 dev: env ## Start the dev stack (runserver autoreload, bind-mounted code, no nginx)
-	$(COMPOSE_DEV) up -d --build
-	@echo "Dev API: http://localhost:$${DEV_WEB_PORT:-8000}/   Docs: http://localhost:$${DEV_WEB_PORT:-8000}/api/docs/"
+	UID=$$(id -u) GID=$$(id -g) $(COMPOSE_DEV) up -d --build
+	@P=$(call ENV_PORT,DEV_WEB_PORT); P=$${P:-8000}; echo "Dev API: http://localhost:$$P/   Docs: http://localhost:$$P/api/docs/   (use DEV=1 with other targets)"
 
 dev-down: ## Stop the dev stack
 	$(COMPOSE_DEV) down
@@ -60,13 +63,16 @@ shell: ## Django shell
 	$(WEB) python manage.py shell
 
 dbshell: ## psql into the database
-	$(WEB) python manage.py dbshell
+	$(ACTIVE) exec db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
 
 test: ## Run the test suite inside the web container
-	$(COMPOSE) exec -e DJANGO_SETTINGS_MODULE=config.settings.test web pytest
+	$(ACTIVE) exec -e DJANGO_SETTINGS_MODULE=config.settings.test web pytest
 
-lint: ## Ruff lint + format check
-	$(WEB) ruff check . && $(WEB) ruff format --check .
+lint: ## Ruff lint + format check + OpenAPI schema validation
+	$(WEB) ruff check . && $(WEB) ruff format --check . && $(MAKE) schema
+
+schema: ## Validate the OpenAPI schema (fails on any warning)
+	$(ACTIVE) exec -e DJANGO_SETTINGS_MODULE=config.settings.test web python manage.py spectacular --validate --fail-on-warn --file /dev/null
 
 fmt: ## Ruff auto-format
 	$(WEB) ruff format .

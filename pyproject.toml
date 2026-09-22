@@ -2,7 +2,7 @@
 DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
 testpaths = ["tests"]
-addopts = "-q --reuse-db"
+addopts = "-q"  # add --reuse-db locally for speed; it goes stale after schema changes
 
 [tool.ruff]
 line-length = 100

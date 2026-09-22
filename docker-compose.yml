@@ -2,6 +2,7 @@ name: music-discovery
 
 x-app: &app
   build: .
+  image: music-discovery-app   # one image shared by web, worker and beat
   env_file: .env
   environment:
     DJANGO_SETTINGS_MODULE: config.settings.prod
@@ -15,9 +16,13 @@ x-app: &app
 services:
   db:
     image: postgres:16-alpine
-    env_file: .env
+    environment:  # only what Postgres needs; keep Django/Spotify secrets out of this container
+      POSTGRES_DB: "${POSTGRES_DB:-musicdb}"
+      POSTGRES_USER: "${POSTGRES_USER:-music}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-music}"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -27,6 +32,7 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no", "--save", ""]
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -71,6 +77,7 @@ services:
       NGINX_RATE_BURST: "${NGINX_RATE_BURST:-50}"
     volumes:
       - ./docker/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./docker/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - static:/app/staticfiles:ro
     depends_on:
       web:
