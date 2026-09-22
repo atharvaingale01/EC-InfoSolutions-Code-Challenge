@@ -22,6 +22,7 @@ from .serializers import (
 from .tasks import cache_payload, recs_cache_key, refresh_user_recommendations
 
 PENDING_DEDUPE_WINDOW = timedelta(minutes=2)
+STALE_PENDING_AFTER = timedelta(minutes=10)  # beyond this a pending row is treated as lost
 
 
 @extend_schema(
@@ -85,7 +86,9 @@ def recommendation_list(request, user_id):
     limit = _parse_limit(request.query_params.get("limit"))
 
     refresh_pending = Recommendation.objects.filter(
-        user_id=user_id, status=Recommendation.Status.PENDING
+        user_id=user_id,
+        status=Recommendation.Status.PENDING,
+        created_at__gte=timezone.now() - STALE_PENDING_AFTER,
     ).exists()
 
     cached = cache.get(recs_cache_key(user_id))
