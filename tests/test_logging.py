@@ -119,3 +119,8 @@ class TestFormatters:
         fmt = logging.Formatter(settings.LOGGING["formatters"]["text"]["format"])
         line = fmt.format(self._record())
         assert "rid=-" in line and "task=-" in line and "hello world" in line
+
+
+def test_worker_keeps_django_logging_config(settings):
+    # Without this Celery would discard the request-id filter and formatter in the worker.
+    assert settings.CELERY_WORKER_HIJACK_ROOT_LOGGER is False

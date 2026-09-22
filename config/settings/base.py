@@ -126,6 +126,9 @@ CELERY_TIMEZONE = "UTC"
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 300
+# Keep Django's LOGGING config in the worker. By default Celery replaces the root
+# handlers with its own, which would drop the request-id filter and JSON format.
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 
 RECS_REFRESH_INTERVAL_MINUTES = env_int("RECS_REFRESH_INTERVAL_MINUTES", 360)
 CELERY_BEAT_SCHEDULE = {
