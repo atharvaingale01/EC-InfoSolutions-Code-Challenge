@@ -1,7 +1,7 @@
 # Development override. Layer it on top of the base file:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-#   make dev
+#   make dev            (other targets: DEV=1 make seed / test / shell ...)
 #
 # Differences from the base stack:
 #   * source tree bind-mounted, Django runserver with autoreload
@@ -13,7 +13,6 @@
 
 name: music-discovery-dev
 
-services:
 x-dev: &dev
   # Match the host user so bind-mounted files stay writable and owned by you.
   # `make dev` exports UID/GID; the defaults suit most single-user Linux setups.
