@@ -36,6 +36,10 @@ services:
   web:
     <<: *dev
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    # Replace (not merge) the base volumes: without the named static volume no
+    # root-owned mount point gets created inside the bind-mounted source tree.
+    volumes: !override
+      - .:/app
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       DJANGO_DEBUG: "1"
