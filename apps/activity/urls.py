@@ -1,7 +1,7 @@
 from django.urls import path
 
-from .views import ActivityCreateView
+from . import views
 
 urlpatterns = [
-    path("", ActivityCreateView.as_view(), name="activity-create"),
+    path("", views.activity_create, name="activity-create"),
 ]

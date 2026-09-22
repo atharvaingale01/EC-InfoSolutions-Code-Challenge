@@ -1,9 +1,9 @@
 from django.urls import path
 
-from .views import SummaryView, TrendsView, UserSummaryView
+from . import views
 
 urlpatterns = [
-    path("summary/", SummaryView.as_view(), name="analytics-summary"),
-    path("trends/", TrendsView.as_view(), name="analytics-trends"),
-    path("user/<uuid:user_id>/", UserSummaryView.as_view(), name="analytics-user"),
+    path("summary/", views.summary, name="analytics-summary"),
+    path("trends/", views.trends, name="analytics-trends"),
+    path("user/<uuid:user_id>/", views.user_summary, name="analytics-user"),
 ]

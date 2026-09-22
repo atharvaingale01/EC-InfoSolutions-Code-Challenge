@@ -1,12 +1,8 @@
 from django.urls import path
 
-from .views import RecommendationListView, RefreshRecommendationsView
+from . import views
 
 urlpatterns = [
-    path("<uuid:user_id>/", RecommendationListView.as_view(), name="recommendation-list"),
-    path(
-        "<uuid:user_id>/refresh/",
-        RefreshRecommendationsView.as_view(),
-        name="recommendation-refresh",
-    ),
+    path("<uuid:user_id>/", views.recommendation_list, name="recommendation-list"),
+    path("<uuid:user_id>/refresh/", views.refresh_recommendations, name="recommendation-refresh"),
 ]

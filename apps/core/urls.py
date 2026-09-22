@@ -1,7 +1,7 @@
 from django.urls import path
 
-from .views import HealthView
+from . import views
 
 urlpatterns = [
-    path("health/", HealthView.as_view(), name="health"),
+    path("health/", views.health, name="health"),
 ]
