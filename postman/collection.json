@@ -89,7 +89,10 @@
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
                   "pm.environment.set('access_token', b.access);",
-                  "pm.environment.set('refresh_token', b.refresh);"
+                  "pm.environment.set('refresh_token', b.refresh);",
+                  "// user id lives in the JWT payload (claim `user_id`)",
+                  "const payload = JSON.parse(atob(b.access.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "pm.environment.set('user_id', payload.user_id);"
                 ]
               }
             }
