@@ -1,4 +1,7 @@
-limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+# Rendered by the nginx image's template mechanism at container start.
+# Only ${NGINX_*} variables are substituted (NGINX_ENVSUBST_FILTER); nginx's own $vars are untouched.
+limit_req_zone $binary_remote_addr zone=api:10m rate=${NGINX_RATE_LIMIT}r/s;
+limit_req_status 429;  # same status as the per-user throttles in Django
 
 upstream django {
     server web:8000;
@@ -19,7 +22,7 @@ server {
     }
 
     location / {
-        limit_req zone=api burst=50 nodelay;
+        limit_req zone=api burst=${NGINX_RATE_BURST} nodelay;
 
         proxy_pass http://django;
         proxy_http_version 1.1;

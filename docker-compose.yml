@@ -65,8 +65,12 @@ services:
     image: nginx:1.27-alpine
     ports:
       - "${NGINX_PORT:-80}:80"
+    environment:
+      NGINX_ENVSUBST_FILTER: "^NGINX_"
+      NGINX_RATE_LIMIT: "${NGINX_RATE_LIMIT:-30}"
+      NGINX_RATE_BURST: "${NGINX_RATE_BURST:-50}"
     volumes:
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - static:/app/staticfiles:ro
     depends_on:
       web:
