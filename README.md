@@ -73,6 +73,7 @@ docker compose exec web python manage.py seed_demo
 | `RECS_CACHE_TTL_SECONDS` | Redis TTL for a user's recommendation list (default 3600) |
 | `THROTTLE_*` | Per-user rate limits (DRF) |
 | `NGINX_RATE_LIMIT`, `NGINX_RATE_BURST` | Per-IP edge rate limit (nginx) |
+| `LOG_LEVEL`, `LOG_FORMAT` | Log verbosity and text/JSON output |
 | `NGINX_PORT` | Host port for the API (default 80) |
 | `DJANGO_SECRET_KEY` | Required for the production settings; the placeholder is rejected |
 | `CORS_ALLOW_ALL_ORIGINS`, `CORS_ALLOWED_ORIGINS` | Browser origins allowed to call the API |
@@ -243,6 +244,26 @@ Per user, backed by Redis: 5/min for refresh triggers, 60/min for activity write
 
 Import `postman/collection.json` and `postman/environment.json`, select the **Music Discovery — Local** environment, run **Auth → Login** once. Tokens and your user id are stored automatically; every other request inherits Bearer auth. A separate folder shows the same calls with HTTP Basic.
 
+### Logging and error handling
+
+**Every log line carries a correlation id.** nginx assigns an `X-Request-ID` to each request, Django reuses it (or mints one when called directly), echoes it in the response header, and passes it into any Celery task the request queues. So a worker log line can be tied back to the API call that caused it:
+
+```
+2026-09-22 10:00:01 INFO apps.requests rid=3f2a… task=- POST /recommendations/…/refresh/ -> 202 in 14ms
+2026-09-22 10:00:04 INFO apps.recommendations.tasks rid=3f2a… task=6cc5… Recommendations ready for alice@example.com: 20 tracks
+```
+
+- **Access log**: one line per request from `apps.requests` with method, path, status, duration and user id (`/health/` is excluded to keep the compose healthcheck quiet).
+- **Audit log**: `apps.audit` records every 401, 403 and 429 with path, user and client address.
+- **Format**: text locally, JSON under the production settings (`LOG_FORMAT=text|json`). JSON lines include `request_id`, `task_id`, and any structured extras, with tracebacks under `exception`.
+- **Level**: `LOG_LEVEL` in `.env`.
+
+**Errors** follow one envelope, `{"detail": "..."}`, with an `errors` object keyed by field on validation failures. Behind the API:
+
+- The Spotify client maps HTTP outcomes to typed exceptions; network errors and 5xx are retried with backoff, 429 honours `Retry-After`, 401 refreshes the token once, 403 and 404 are terminal.
+- The Celery task always leaves the recommendation row `ready` or `failed`: rate limits retry with Spotify's requested wait, transient errors retry three times, auth/forbidden fail immediately, the soft time limit fails cleanly, and any unexpected exception is logged with its traceback and stored as a short message so internals never reach clients.
+- A broker outage during a profile update, a Redis outage during a read, and concurrent cache inserts all degrade gracefully instead of returning 500.
+
 ---
 
 ## Assumptions and limitations
@@ -284,8 +305,9 @@ Import `postman/collection.json` and `postman/environment.json`, select the **Mu
 | **Development compose override** (`make dev`) | runserver with autoreload, code bind-mounted, DB and Redis published, no nginx |
 | **Swagger UI and OpenAPI schema** | Generated from the views; `make lint` validates it with `spectacular --validate --fail-on-warn` |
 | **Health endpoint** | Database and cache check, used by the compose healthcheck |
+| **Request correlation and structured logs** | `X-Request-ID` from nginx through Django into Celery, JSON logs in production, audit lines for 401/403/429 |
 | **Function-based views throughout** | Every endpoint is an `@api_view` function; classes are used for models, serializers, permissions, throttles and clients |
 | **Persistent Spotify cache table** | Every Spotify response stored in PostgreSQL with an expiry, on top of the Redis layer, so rebuilds for overlapping tastes cost few upstream calls |
 | **Celery Beat cache purge** | Daily cleanup of expired Spotify cache rows |
-| **109 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
+| **122 tests** | Users, auth, ownership, throttling, Spotify client against mocked HTTP, ranking engine, mock client, Celery task outcomes, analytics, seeder |
 | **Makefile and Postman collection** | One-command setup; collection with login script and both auth styles |
