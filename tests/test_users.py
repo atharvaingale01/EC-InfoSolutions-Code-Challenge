@@ -121,10 +121,25 @@ class TestUpdate:
         def boom(*a, **k):
             raise ConnectionError("broker down")
 
-        monkeypatch.setattr(tasks.refresh_user_recommendations, "delay", boom)
+        monkeypatch.setattr(tasks.refresh_user_recommendations, "apply_async", boom)
         resp = auth_client.post("/users/", {"moods": ["happy"]}, format="json")
         assert resp.status_code == 200  # profile write still succeeds
         assert Recommendation.objects.get(user=user).status == "failed"
+
+    def test_rapid_changes_are_coalesced_with_a_countdown(self, auth_client, user, monkeypatch):
+        from apps.users import services
+
+        calls = []
+
+        def fake_enqueue(u, countdown=0, expires=None):
+            calls.append(countdown)
+            return Recommendation.objects.create(user=u, status="ready")  # completes instantly
+
+        monkeypatch.setattr("apps.recommendations.tasks.enqueue_refresh", fake_enqueue)
+        auth_client.post("/users/", {"moods": ["happy"]}, format="json")
+        auth_client.post("/users/", {"moods": ["party"]}, format="json")
+        assert calls[0] == 0
+        assert 0 < calls[1] <= services.REBUILD_MIN_INTERVAL.total_seconds() + 1
 
 
 @pytest.mark.django_db

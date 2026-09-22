@@ -11,8 +11,11 @@ from apps.users.models import User
 def test_seed_demo_is_idempotent():
     call_command("seed_demo", verbosity=0)
     assert User.objects.filter(is_staff=False).count() == len(DEMO_USERS)
-    assert User.objects.filter(email="admin@example.com", is_staff=True).exists()
+    admin = User.objects.get(email="admin@example.com")
+    assert admin.is_staff and not admin.is_superuser
     assert UserActivity.objects.count() == 50
+    # timestamps are spread over two weeks, not all "now"
+    assert UserActivity.objects.values("created_at").distinct().count() > 10
     # eager celery: refresh already ran via on_commit
     assert Recommendation.objects.filter(status="ready").count() == len(DEMO_USERS)
 

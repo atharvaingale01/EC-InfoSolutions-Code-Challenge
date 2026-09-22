@@ -193,3 +193,47 @@ def test_cache_write_race_is_tolerated(monkeypatch):
 
     monkeypatch.setattr(cache_mod.SpotifyCache.objects, "update_or_create", collide)
     assert cache_mod.cached_get("search_tracks", {"q": "x"}, lambda: {"ok": 1}) == {"ok": 1}
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_network_errors_are_retried_then_raised_as_unavailable():
+    import requests as rq
+
+    mock_token()
+    for _ in range(3):
+        responses.add(responses.GET, SEARCH_URL, body=rq.exceptions.ConnectTimeout("boom"))
+    with pytest.raises(SpotifyUnavailable, match="ConnectTimeout"):
+        SpotifyClient().search_tracks("q")
+    assert sum(1 for c in responses.calls if c.request.method == "GET") == 3
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_long_retry_after_is_raised_immediately_not_slept():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, status=429, headers={"Retry-After": "60"})
+    with pytest.raises(SpotifyRateLimited) as info:
+        SpotifyClient().search_tracks("q")
+    assert info.value.retry_after == 60
+    assert sum(1 for c in responses.calls if c.request.method == "GET") == 1
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_garbage_retry_after_header_defaults_to_one_second():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, status=429, headers={"Retry-After": "soon"})
+    responses.add(responses.GET, SEARCH_URL, json=search_payload(1), status=200)
+    assert len(SpotifyClient().search_tracks("q")) == 1
+
+
+@pytest.mark.django_db
+@responses.activate
+def test_second_401_is_an_auth_error_not_retried_forever():
+    mock_token()
+    responses.add(responses.GET, SEARCH_URL, status=401)
+    responses.add(responses.POST, TOKEN_URL, json={"access_token": "tok2", "expires_in": 60})
+    responses.add(responses.GET, SEARCH_URL, status=401)
+    with pytest.raises(SpotifyAuthError):
+        SpotifyClient().search_tracks("q")

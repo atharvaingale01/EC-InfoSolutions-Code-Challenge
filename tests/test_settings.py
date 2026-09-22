@@ -30,3 +30,8 @@ def test_prod_allows_placeholder_when_explicitly_permitted(monkeypatch):
 def test_prod_accepts_a_real_secret(monkeypatch):
     mod = _load_prod(monkeypatch, "a-genuinely-random-secret-value-0123456789abcdef")
     assert mod.DEBUG is False
+
+
+def test_prod_trusts_exactly_one_proxy_for_throttle_identity(monkeypatch):
+    mod = _load_prod(monkeypatch, "a-genuinely-random-secret-value-0123456789abcdef")
+    assert mod.REST_FRAMEWORK["NUM_PROXIES"] == 1
